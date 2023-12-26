@@ -16,7 +16,18 @@ type Command struct {
 	Short string
 	Long  string
 	Help  string
-	Run   func([]string) error
+	Run   func([]string) 
+}
+
+func UnknownCommand(cmd string) *Command {
+	return &Command{
+		Name:  "unknown",
+		Short: "Got did not recognise the subcommand",
+		Long:  "Got did not recognise the subcommand; try running \"got --help\" for more",
+		Run: func(s []string) {
+            exitWithError("Got did not recognise the subcommand %q", cmd)
+		},
+	}
 }
 
 func InitCommand() *Command {
@@ -24,7 +35,7 @@ func InitCommand() *Command {
 		Name:  "init",
 		Short: "Initialises a got repository",
 		Long:  "Initialises a got repository with a hidden .got file to hold data",
-		Run: func(s []string) error {
+		Run: func(s []string) {
 			if exists(GOT_REPO) {
 				if isDir(GOT_REPO) {
 					exitWithError("%q repo already initialised", GOT_REPO)
@@ -33,7 +44,7 @@ func InitCommand() *Command {
 			}
 
             os.Mkdir(GOT_REPO, 0700)
-			return nil
+            // TODO: Initialie with commit
 		},
 	}
 
@@ -50,6 +61,8 @@ func Execute() {
 	switch subCmd {
 	case "init":
 		cmd = InitCommand()
+    default:
+        cmd = UnknownCommand(subCmd)
 	}
 
 	cmd.Run(os.Args[1:])
