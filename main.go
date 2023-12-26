@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/zlib"
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
@@ -105,6 +107,22 @@ func hashObject(obj string, write bool) string {
 		}
 
 		defer file.Close()
+
+        fileContents, err := os.ReadFile(obj)
+        if err != nil {
+            exitWithError("Could not read contents from file %v for compression", obj)
+        }
+
+        var b bytes.Buffer
+        compressor := zlib.NewWriter(&b)
+        compressor.Write([]byte(fileContents))
+        compressor.Close()
+
+
+        err = os.WriteFile(objFile, b.Bytes(), READ_WRITE_PERM)
+        if err != nil {
+            exitWithError("Could not write compressed contents of %v to %v", obj, objFile)
+        }
 	}
 
 	return id
