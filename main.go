@@ -5,6 +5,7 @@ import (
 	"compress/zlib"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,7 +15,7 @@ const GOT_REPO = ".got"
 const READ_WRITE_PERM = 0700
 
 func main() {
-	hashObject("main.go", true)
+	Execute()
 }
 
 type Command struct {
@@ -56,6 +57,51 @@ func InitCommand() *Command {
 
 }
 
+func AddCommand() *Command {
+	return &Command{
+		Name:  "add",
+		Short: "Add objects to the index",
+		Long:  "Add files or directories to the index (staging area)",
+		Run: func(s []string) {
+            if len(s) < 1 {
+                exitWithError("Not enough arguments to add command")
+            }
+
+			indexPath := filepath.Join(GOT_REPO, "index")
+			indexMap := make(map[string]string)
+
+			if !exists(indexPath) {
+				indexFile, err := os.Create(indexPath)
+				if err != nil {
+					exitWithError("Could not create index file: %v", err)
+				}
+				defer indexFile.Close()
+			} else {
+
+				indexFile, err := os.Open(indexPath)
+				if err != nil {
+					exitWithError("Could not read index file for add command: ", err)
+				}
+				defer indexFile.Close()
+
+				decoder := json.NewDecoder(indexFile)
+				decoder.Decode(&indexMap)
+			}
+
+			for _, obj := range s {
+				id := hashObject(obj, true)
+				indexMap[obj] = id
+			}
+
+			var b bytes.Buffer
+			encoder := json.NewEncoder(&b)
+			encoder.Encode(indexMap)
+
+			os.WriteFile(indexPath, b.Bytes(), READ_WRITE_PERM)
+		},
+	}
+}
+
 func Execute() {
 	if len(os.Args) < 2 {
 		exitWithError("Not enough arguments")
@@ -67,11 +113,13 @@ func Execute() {
 	switch subCmd {
 	case "init":
 		cmd = InitCommand()
+	case "add":
+		cmd = AddCommand()
 	default:
 		cmd = UnknownCommand(subCmd)
 	}
 
-	cmd.Run(os.Args[1:])
+	cmd.Run(os.Args[2:])
 }
 
 // got library
@@ -108,21 +156,20 @@ func hashObject(obj string, write bool) string {
 
 		defer file.Close()
 
-        fileContents, err := os.ReadFile(obj)
-        if err != nil {
-            exitWithError("Could not read contents from file %v for compression", obj)
-        }
+		fileContents, err := os.ReadFile(obj)
+		if err != nil {
+			exitWithError("Could not read contents from file %v for compression", obj)
+		}
 
-        var b bytes.Buffer
-        compressor := zlib.NewWriter(&b)
-        compressor.Write([]byte(fileContents))
-        compressor.Close()
+		var b bytes.Buffer
+		compressor := zlib.NewWriter(&b)
+		compressor.Write([]byte(fileContents))
+		compressor.Close()
 
-
-        err = os.WriteFile(objFile, b.Bytes(), READ_WRITE_PERM)
-        if err != nil {
-            exitWithError("Could not write compressed contents of %v to %v", obj, objFile)
-        }
+		err = os.WriteFile(objFile, b.Bytes(), READ_WRITE_PERM)
+		if err != nil {
+			exitWithError("Could not write compressed contents of %v to %v", obj, objFile)
+		}
 	}
 
 	return id
