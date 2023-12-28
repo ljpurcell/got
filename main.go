@@ -15,7 +15,7 @@ const GOT_REPO = ".got"
 const READ_WRITE_PERM = 0700
 
 func main() {
-	Execute()
+	hashTree("test", true)
 }
 
 type Command struct {
@@ -63,9 +63,9 @@ func AddCommand() *Command {
 		Short: "Add objects to the index",
 		Long:  "Add files or directories to the index (staging area)",
 		Run: func(s []string) {
-            if len(s) < 1 {
-                exitWithError("Not enough arguments to add command")
-            }
+			if len(s) < 1 {
+				exitWithError("Not enough arguments to add command")
+			}
 
 			indexPath := filepath.Join(GOT_REPO, "index")
 			indexMap := make(map[string]string)
@@ -89,7 +89,7 @@ func AddCommand() *Command {
 			}
 
 			for _, obj := range s {
-				id := hashObject(obj, true)
+				id := hashBlob(obj, true)
 				indexMap[obj] = id
 			}
 
@@ -123,15 +123,13 @@ func Execute() {
 }
 
 // got library
-func hashObject(obj string, write bool) string {
+func hashBlob(obj string, write bool) string {
 	if !exists(obj) {
 		exitWithError("Cannot hash %q. Object doesn't exist", obj)
 	}
 
-	objType := "blob"
-
 	if isDir(obj) {
-		objType = "tree"
+		exitWithError("Cannot call hash blob on %q. Object is a directory", obj)
 	}
 
 	info, err := os.Stat(obj)
@@ -139,9 +137,9 @@ func hashObject(obj string, write bool) string {
 		exitWithError("Could not get file size for hash of %q", obj)
 	}
 
-	toHash := fmt.Sprintf("%v %d\u0000", objType, info.Size())
+	toHash := fmt.Sprintf("blob %d\u0000", info.Size())
 	hasher := sha1.New()
-	hasher.Write(hasher.Sum([]byte(toHash)))
+	hasher.Write([]byte(toHash))
 	id := hex.EncodeToString(hasher.Sum(nil))
 
 	if write {
@@ -172,6 +170,40 @@ func hashObject(obj string, write bool) string {
 		}
 	}
 
+	return id
+}
+
+func hashTree(dir string, write bool) string {
+	if !exists(dir) {
+		exitWithError("Cannot hash %q. Object doesn't exist", dir)
+	}
+
+	if !isDir(dir) {
+		exitWithError("Cannot call hash tree on %q. Object is not a directory", dir)
+	}
+
+	var tree string
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		exitWithError("Could not read files for %v: %v", dir, err)
+	}
+
+	for _, file := range files {
+		filePath := filepath.Join(dir, file.Name())
+		if file.IsDir() {
+			treeId := hashTree(filePath, true)
+			tree += fmt.Sprintf("%v tree %v %v\n", 100644, treeId, file.Name())
+		} else {
+			blobId := hashBlob(filePath, true)
+			tree += fmt.Sprintf("%v blob %v %v\n", 100644, blobId, file.Name())
+		}
+
+	}
+
+	toHash := fmt.Sprintf("tree %d\u0000%v", len(tree), tree)
+	hasher := sha1.New()
+	hasher.Write([]byte(toHash))
+	id := hex.EncodeToString(hasher.Sum(nil))
 	return id
 }
 
