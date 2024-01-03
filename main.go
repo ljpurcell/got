@@ -9,13 +9,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
 )
 
 const GOT_REPO = ".got"
 const READ_WRITE_PERM = 0700
 
 func main() {
-	hashTree("test", true)
+	Execute()
 }
 
 type Command struct {
@@ -24,6 +26,19 @@ type Command struct {
 	Long  string
 	Help  string
 	Run   func([]string)
+}
+
+type GotObject struct {
+	id string
+}
+
+type Commit struct {
+	object    GotObject
+	author    string
+	createdAt time.Time
+	message   string
+	parentId  string
+	treeId    string
 }
 
 func UnknownCommand(cmd string) *Command {
@@ -50,8 +65,18 @@ func InitCommand() *Command {
 				exitWithError("File named %q already exists", GOT_REPO)
 			}
 
-			os.Mkdir(GOT_REPO, READ_WRITE_PERM)
-			// TODO: Initialie with commit
+			heads := filepath.Join(GOT_REPO, "refs", "heads")
+			os.MkdirAll(heads, READ_WRITE_PERM)
+
+			headFile := filepath.Join(GOT_REPO, "HEAD")
+			head, err := os.Create(headFile)
+			if err != nil {
+				exitWithError("Could not create HEAD file: %v", err)
+			}
+			defer head.Close()
+			os.WriteFile(headFile, []byte("ref: refs/heads/main"), READ_WRITE_PERM)
+
+			fmt.Fprintf(os.Stdout, "Initialised an empty got repository\n")
 		},
 	}
 
@@ -89,7 +114,14 @@ func AddCommand() *Command {
 			}
 
 			for _, obj := range s {
-				id := hashBlob(obj, true)
+
+				var id string
+				if isDir(obj) {
+					id = hashTree(obj, true)
+				} else {
+					id = hashBlob(obj, true)
+				}
+
 				indexMap[obj] = id
 			}
 
@@ -98,6 +130,96 @@ func AddCommand() *Command {
 			encoder.Encode(indexMap)
 
 			os.WriteFile(indexPath, b.Bytes(), READ_WRITE_PERM)
+		},
+	}
+}
+
+func CommitCommand() *Command {
+	return &Command{
+		Name:  "commit",
+		Short: "Commit the current index",
+		Long:  "Create a commit (snapshot) of the current state of the objects listed in the index",
+		Run: func(s []string) {
+			if len(s) != 1 {
+				exitWithError("You can only pass exactly one argument [commit message] to this command")
+			}
+
+			// 1. Generate an up to date tree hash for all listings in index
+			indexPath := filepath.Join(GOT_REPO, "index")
+
+			if !exists(indexPath) {
+				exitWithError("No index file. Nothing staged to commit")
+			}
+
+			index, err := os.Open(indexPath)
+			if err != nil {
+				exitWithError("Could not open index for commit command: %v", err)
+			}
+			indexMap := make(map[string]string)
+			decoder := json.NewDecoder(index)
+			decoder.Decode(&indexMap)
+
+			if len(indexMap) == 0 {
+				exitWithError("Index file empty. Nothing staged to commit")
+			}
+
+			var tree string
+			for file := range indexMap {
+				if isDir(file) {
+					treeId := hashTree(file, true)
+					tree += fmt.Sprintf("%v tree %v %v\n", 100644, treeId, file)
+				} else {
+					blobId := hashBlob(file, true)
+					tree += fmt.Sprintf("%v blob %v %v\n", 100644, blobId, file)
+				}
+			}
+
+			toHash := fmt.Sprintf("tree %d\u0000%v", len(tree), tree)
+			hasher := sha1.New()
+			hasher.Write([]byte(toHash))
+			snapshotId := hex.EncodeToString(hasher.Sum(nil))
+
+			// 2. get parent commit, if exists
+			headRef, err := os.ReadFile(filepath.Join(GOT_REPO, "HEAD"))
+			if err != nil {
+				exitWithError("Could not read content from HEAD file: %v", err)
+			}
+
+			ref := strings.Split(string(headRef), ":")
+			pathBits := strings.Split(strings.TrimSpace(ref[1]), "/")
+			pathToRef := append([]string{GOT_REPO}, pathBits...)
+			path := filepath.Join(pathToRef...)
+
+			parentId := ""
+			if exists(path) {
+				contents, err := os.ReadFile(path)
+				parentId = string(contents)
+				if err != nil {
+					exitWithError("Could not read file at %v: %v")
+				}
+			}
+
+			// 3. Create commit
+			c := createCommit(snapshotId, parentId, s[0])
+
+			// Post Commit:
+			// 1. Clear index
+			if err := os.Truncate(indexPath, 0); err != nil {
+				exitWithError("Could not clear index file: %v", err)
+			}
+
+			// 2. Update hash pointed at in HEAD
+			if exists(path) {
+				if err := os.Truncate(path, 0); err != nil {
+					exitWithError("Could not clear ref file %v: %v", path, err)
+				}
+			}
+
+			commitId := c.object.id
+
+			if err := os.WriteFile(path, []byte(commitId), READ_WRITE_PERM); err != nil {
+				exitWithError("Could not write commit id %v to %v file: %v", commitId, path, err)
+			}
 		},
 	}
 }
@@ -115,6 +237,8 @@ func Execute() {
 		cmd = InitCommand()
 	case "add":
 		cmd = AddCommand()
+	case "commit":
+		cmd = CommitCommand()
 	default:
 		cmd = UnknownCommand(subCmd)
 	}
@@ -204,7 +328,79 @@ func hashTree(dir string, write bool) string {
 	hasher := sha1.New()
 	hasher.Write([]byte(toHash))
 	id := hex.EncodeToString(hasher.Sum(nil))
+
+	if write {
+		objDir := filepath.Join(GOT_REPO, "objects", id[:2])
+		objFile := filepath.Join(objDir, id[2:])
+
+		os.MkdirAll(objDir, READ_WRITE_PERM)
+		file, err := os.Create(objFile)
+		if err != nil {
+			exitWithError("Could not write object %q (tree) using name %q in directory %q", dir, objFile, objDir)
+		}
+
+		defer file.Close()
+
+		var b bytes.Buffer
+		compressor := zlib.NewWriter(&b)
+		compressor.Write([]byte(toHash))
+		compressor.Close()
+
+		err = os.WriteFile(objFile, b.Bytes(), READ_WRITE_PERM)
+		if err != nil {
+			exitWithError("Could not write compressed contents of %v to %v", dir, objFile)
+		}
+	}
+
 	return id
+}
+
+func createCommit(tree string, parentId string, msg string) *Commit {
+	parentListing := ""
+	if parentId != "" {
+		parentListing = fmt.Sprintf("parent %v", parentId)
+	}
+
+	committer := "ljpurcell" // TODO work on Got config
+
+	data := fmt.Sprintf("tree %v\n%v\ncommiter %v\n\n%v", tree, parentListing, committer, msg)
+
+	toHash := fmt.Sprintf("commit %d\u0000%v", len(data), data)
+	hasher := sha1.New()
+	hasher.Write([]byte(toHash))
+	id := hex.EncodeToString(hasher.Sum(nil))
+
+	objDir := filepath.Join(GOT_REPO, "objects", id[:2])
+	objFile := filepath.Join(objDir, id[2:])
+
+	os.MkdirAll(objDir, READ_WRITE_PERM)
+	file, err := os.Create(objFile)
+	if err != nil {
+		exitWithError("Could not write object (commit) using name %q in directory %q", objFile, objDir)
+	}
+
+	defer file.Close()
+
+	var b bytes.Buffer
+	compressor := zlib.NewWriter(&b)
+	compressor.Write([]byte(toHash))
+	compressor.Close()
+
+	err = os.WriteFile(objFile, b.Bytes(), READ_WRITE_PERM)
+	if err != nil {
+		exitWithError("Could not write compressed contents of commit with message %q to %v", msg, objFile)
+	}
+
+	return &Commit{
+		object: GotObject{
+			id: id,
+		},
+		author:    "ljpurcell",
+		createdAt: time.Now(),
+		message:   msg,
+		parentId:  "",
+		treeId:    tree,
+	}
 }
 
 // general utils

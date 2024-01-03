@@ -69,27 +69,27 @@ func TestHashBlobCompressesFileContents(t *testing.T) {
 	file.Write([]byte(text))
 	id := hashBlob(file.Name(), true)
 
-    blobFile := filepath.Join(GOT_REPO, "objects", id[:2], id[2:])
+	blobFile := filepath.Join(GOT_REPO, "objects", id[:2], id[2:])
 
-    fileContents, err := os.ReadFile(blobFile)
-    if err != nil {
-        t.Fatalf("Could not read contents from %v for decompression", blobFile)
-    }
+	fileContents, err := os.ReadFile(blobFile)
+	if err != nil {
+		t.Fatalf("Could not read contents from %v for decompression", blobFile)
+	}
 
-    data := bytes.NewReader(fileContents)
-    dec, err := zlib.NewReader(data)
-    if err != nil {
-        t.Fatalf("Could not create ZLIB reader: %v", err)
-    }
-    dec.Close()
+	data := bytes.NewReader(fileContents)
+	dec, err := zlib.NewReader(data)
+	if err != nil {
+		t.Fatalf("Could not create ZLIB reader: %v", err)
+	}
+	dec.Close()
 
-    out, err := io.ReadAll(dec)
+	out, err := io.ReadAll(dec)
 
-    result := string(out)
+	result := string(out)
 
-    if result != text {
-        t.Fatalf("Exp: %v. Actual: %v", text, result)
-    }
+	if result != text {
+		t.Fatalf("Exp: %v. Actual: %v", text, result)
+	}
 
 }
 
