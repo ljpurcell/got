@@ -172,18 +172,22 @@ func CreateCommit(tree string, parentId string, msg string) *Commit {
 }
 
 func formatHexId(obj string, objType string) (id string, objectString string) {
+
+	size, content := len(obj), obj
 	if objType == "blob" {
+		fileContents, err := os.ReadFile(obj)
+		if err != nil {
+			utils.ExitWithError("Could not read file %v: %v", obj, err)
+		}
 		info, err := os.Stat(obj)
 		if err != nil {
 			utils.ExitWithError("Could not get file size for hash of %q", obj)
 		}
-		objectString = fmt.Sprintf("blob %d\u0000", info.Size())
-	} else if objType == "tree" {
-		objectString = fmt.Sprintf("tree %d\u0000%v", len(obj), obj)
-	} else if objType == "commit" {
-		objectString = fmt.Sprintf("commit %d\u0000%v", len(obj), obj)
+		size = int(info.Size())
+		content = string(fileContents)
 	}
 
+	objectString = fmt.Sprintf("%v %d\u0000%v", objType, size, content)
 	hasher := sha1.New()
 	hasher.Write([]byte(objectString))
 	id = hex.EncodeToString(hasher.Sum(nil))
