@@ -35,24 +35,16 @@ func HashObject(obj string) (id string, objectType string) {
 	return
 }
 
-func hashBlob(obj string) string {
-	if !utils.Exists(obj) {
-		utils.ExitWithError("Cannot hash %q. Object doesn't exist", obj)
+func hashBlob(fileName string) string {
+	if !utils.Exists(fileName) {
+		utils.ExitWithError("Cannot hash %q. Object doesn't exist", fileName)
 	}
 
-	if utils.IsDir(obj) {
-		utils.ExitWithError("Cannot call hash blob on %q. Object is a directory", obj)
+	if utils.IsDir(fileName) {
+		utils.ExitWithError("Cannot call hash blob on %q. Object is a directory", fileName)
 	}
 
-	info, err := os.Stat(obj)
-	if err != nil {
-		utils.ExitWithError("Could not get file size for hash of %q", obj)
-	}
-
-	toHash := fmt.Sprintf("blob %d\u0000", info.Size())
-	hasher := sha1.New()
-	hasher.Write([]byte(toHash))
-	id := hex.EncodeToString(hasher.Sum(nil))
+	id, _ := formatHexId(fileName, "blob")
 
 	objDir := filepath.Join(cfg.GOT_REPO, "objects", id[:2])
 	objFile := filepath.Join(objDir, id[2:])
@@ -60,14 +52,14 @@ func hashBlob(obj string) string {
 	os.MkdirAll(objDir, 0700)
 	file, err := os.Create(objFile)
 	if err != nil {
-		utils.ExitWithError("Could not write object %q using name %q in directory %q", obj, objFile, objDir)
+		utils.ExitWithError("Could not write object %q using name %q in directory %q", fileName, objFile, objDir)
 	}
 
 	defer file.Close()
 
-	fileContents, err := os.ReadFile(obj)
+	fileContents, err := os.ReadFile(fileName)
 	if err != nil {
-		utils.ExitWithError("Could not read contents from file %v for compression", obj)
+		utils.ExitWithError("Could not read contents from file %v for compression", fileName)
 	}
 
 	var b bytes.Buffer
@@ -77,7 +69,7 @@ func hashBlob(obj string) string {
 
 	err = os.WriteFile(objFile, b.Bytes(), 0700)
 	if err != nil {
-		utils.ExitWithError("Could not write compressed contents of %v to %v", obj, objFile)
+		utils.ExitWithError("Could not write compressed contents of %v to %v", fileName, objFile)
 	}
 
 	return id
@@ -110,10 +102,7 @@ func hashTree(dir string) string {
 
 	}
 
-	toHash := fmt.Sprintf("tree %d\u0000%v", len(tree), tree)
-	hasher := sha1.New()
-	hasher.Write([]byte(toHash))
-	id := hex.EncodeToString(hasher.Sum(nil))
+	id, treeString := formatHexId(tree, "tree")
 
 	objDir := filepath.Join(cfg.GOT_REPO, "objects", id[:2])
 	objFile := filepath.Join(objDir, id[2:])
@@ -128,7 +117,7 @@ func hashTree(dir string) string {
 
 	var b bytes.Buffer
 	compressor := zlib.NewWriter(&b)
-	compressor.Write([]byte(toHash))
+	compressor.Write([]byte(treeString))
 	compressor.Close()
 
 	err = os.WriteFile(objFile, b.Bytes(), 0700)
@@ -149,10 +138,7 @@ func CreateCommit(tree string, parentId string, msg string) *Commit {
 
 	data := fmt.Sprintf("tree %v\n%v\ncommiter %v\n\n%v", tree, parentListing, committer, msg)
 
-	toHash := fmt.Sprintf("commit %d\u0000%v", len(data), data)
-	hasher := sha1.New()
-	hasher.Write([]byte(toHash))
-	id := hex.EncodeToString(hasher.Sum(nil))
+	id, commitString := formatHexId(data, "commit")
 
 	objDir := filepath.Join(cfg.GOT_REPO, "objects", id[:2])
 	objFile := filepath.Join(objDir, id[2:])
@@ -167,7 +153,7 @@ func CreateCommit(tree string, parentId string, msg string) *Commit {
 
 	var b bytes.Buffer
 	compressor := zlib.NewWriter(&b)
-	compressor.Write([]byte(toHash))
+	compressor.Write([]byte(commitString))
 	compressor.Close()
 
 	err = os.WriteFile(objFile, b.Bytes(), 0700)
@@ -183,4 +169,23 @@ func CreateCommit(tree string, parentId string, msg string) *Commit {
 		ParentId:  "",
 		TreeId:    tree,
 	}
+}
+
+func formatHexId(obj string, objType string) (id string, objectString string) {
+	if objType == "blob" {
+		info, err := os.Stat(obj)
+		if err != nil {
+			utils.ExitWithError("Could not get file size for hash of %q", obj)
+		}
+		objectString = fmt.Sprintf("blob %d\u0000", info.Size())
+	} else if objType == "tree" {
+		objectString = fmt.Sprintf("tree %d\u0000%v", len(obj), obj)
+	} else if objType == "commit" {
+		objectString = fmt.Sprintf("commit %d\u0000%v", len(obj), obj)
+	}
+
+	hasher := sha1.New()
+	hasher.Write([]byte(objectString))
+	id = hex.EncodeToString(hasher.Sum(nil))
+	return
 }
