@@ -1,8 +1,8 @@
-package main
+package utils
 
 /**
 * General utility functions
-*/
+ */
 
 import (
 	"fmt"
