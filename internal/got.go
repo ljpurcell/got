@@ -1,6 +1,7 @@
 package got
 
 import (
+	"bufio"
 	"bytes"
 	"compress/zlib"
 	"crypto/sha1"
@@ -8,10 +9,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	cfg "github.com/ljpurcell/got/internal/config"
 	"github.com/ljpurcell/got/internal/utils"
+)
+
+const (
+	BLOB   = "blob"
+	TREE   = "tree"
+	COMMTI = "commit"
 )
 
 type Commit struct {
@@ -23,15 +31,25 @@ type Commit struct {
 	TreeId    string
 }
 
+type Index struct {
+    entries []indexEntry
+}
+
+type indexEntry struct {
+	Id     string
+	File   string
+	Status string
+}
+
 func HashObject(obj string) (id string, objectType string) {
 	if utils.IsDir(obj) {
 		id = hashTree(obj)
-		objectType = "tree"
+		objectType = TREE
 		return
 	}
 
 	id = hashBlob(obj)
-	objectType = "blob"
+	objectType = BLOB
 	return
 }
 
@@ -44,7 +62,7 @@ func hashBlob(fileName string) string {
 		utils.ExitWithError("Cannot call hash blob on %q. Object is a directory", fileName)
 	}
 
-	id, _ := formatHexId(fileName, "blob")
+	id, _ := formatHexId(fileName, BLOB)
 
 	objDir := filepath.Join(cfg.GOT_REPO, "objects", id[:2])
 	objFile := filepath.Join(objDir, id[2:])
@@ -102,7 +120,7 @@ func hashTree(dir string) string {
 
 	}
 
-	id, treeString := formatHexId(tree, "tree")
+	id, treeString := formatHexId(tree, TREE)
 
 	objDir := filepath.Join(cfg.GOT_REPO, "objects", id[:2])
 	objFile := filepath.Join(objDir, id[2:])
@@ -171,7 +189,7 @@ func CreateCommit(tree string, parentId string, msg string) *Commit {
 	}
 }
 
-func formatHexId(obj string, objType string) (id string, objectString string) {
+func formatHexId(obj string, objType string) (id string, objString string) {
 
 	size, content := len(obj), obj
 	if objType == "blob" {
@@ -187,9 +205,82 @@ func formatHexId(obj string, objType string) (id string, objectString string) {
 		content = string(fileContents)
 	}
 
-	objectString = fmt.Sprintf("%v %d\u0000%v", objType, size, content)
+	objString = fmt.Sprintf("%v %d\u0000%v", objType, size, content)
 	hasher := sha1.New()
-	hasher.Write([]byte(objectString))
+	hasher.Write([]byte(objString))
 	id = hex.EncodeToString(hasher.Sum(nil))
 	return
+}
+
+func GetIndexEntries() Index {
+	index := Index{}
+
+	path := filepath.Join(cfg.GOT_REPO, cfg.INDEX_FILE)
+	if !utils.Exists(path) {
+		return index
+	}
+
+	indexFile, err := os.Open(path)
+	if err != nil {
+		utils.ExitWithError("Could not open index file: %v", err)
+	}
+
+	scanner := bufio.NewScanner(indexFile)
+	for scanner.Scan() {
+		entryParts := strings.Split(scanner.Text(), " ")
+		entry := indexEntry{
+			Id:     entryParts[1],
+			File:   entryParts[2],
+			Status: entryParts[0],
+		}
+
+		index.entries = append(*&index.entries, entry)
+	}
+
+	return index
+}
+
+func (i *Index) IncludesFile(file string) (bool, int) {
+    for idx, entry := range *&i.entries {
+        if entry.File == file {
+            return true, idx
+        }
+    }
+
+    return false, -1
+}
+
+func (i *Index) UpdateOrAdd(entry indexEntry) {
+    found, index := i.IncludesFile(entry.File)
+    if found {
+        i.entries[index] = entry
+        return
+    }
+
+    i.entries = append(i.entries, entry)
+}
+
+func (i *Index) Remove(file string) bool {
+    found, idx := i.IncludesFile(file)
+    if found {
+        i.entries = append(i.entries[:idx], i.entries[idx+1:]...)
+        return true
+    }
+
+    return false
+}
+
+func (i *Index) Save() {
+	path := filepath.Join(cfg.GOT_REPO, cfg.INDEX_FILE)
+	if utils.Exists(path) {
+        os.Truncate(path, 0)
+	}
+
+    contents := ""
+    for _, entry := range *&i.entries {
+        contents += fmt.Sprintf("%v %v %v", entry.Status, entry.Id, entry.File)
+    }
+
+    fmt.Println(contents)
+    os.WriteFile(path, []byte(contents), 0700)
 }
