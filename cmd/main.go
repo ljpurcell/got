@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
@@ -102,38 +101,14 @@ func AddCommand() *Command {
 				utils.ExitWithError("Not enough arguments to add command")
 			}
 
-			indexPath := filepath.Join(cfg.GOT_REPO, "index")
-			indexMap := make(map[string]string)
+			index := got.GetIndex()
 
-			if !utils.Exists(indexPath) {
-				indexFile, err := os.Create(indexPath)
-				if err != nil {
-					utils.ExitWithError("Could not create index file: %v", err)
-				}
-				defer indexFile.Close()
-			} else {
+			for _, file := range s {
 
-				indexFile, err := os.Open(indexPath)
-				if err != nil {
-					utils.ExitWithError("Could not read index file for add command: ", err)
-				}
-				defer indexFile.Close()
-
-				decoder := json.NewDecoder(indexFile)
-				decoder.Decode(&indexMap)
+				index.UpdateOrAddFromFile(file)
 			}
 
-			for _, obj := range s {
-
-				id, _ := got.HashObject(obj)
-				indexMap[obj] = id
-			}
-
-			var b bytes.Buffer
-			encoder := json.NewEncoder(&b)
-			encoder.Encode(indexMap)
-
-			os.WriteFile(indexPath, b.Bytes(), READ_WRITE_PERM)
+            index.Save()
 		},
 	}
 }
@@ -215,7 +190,7 @@ func CommitCommand() *Command {
 			}
 
 			if err := os.WriteFile(path, []byte(commit.Id), READ_WRITE_PERM); err != nil {
-				utils.ExitWithError("Could not write commit id %v to %v file: %v", commitId, path, err)
+				utils.ExitWithError("Could not write commit id %v to %v file: %v", commit.Id, path, err)
 			}
 		},
 	}
