@@ -19,7 +19,10 @@ import (
 const (
 	BLOB   = "blob"
 	TREE   = "tree"
-	COMMTI = "commit"
+	COMMIT = "commit"
+    STATUS_ADD = "A"
+    STATUS_MODIFY = "M"
+    STATUS_DELETE = "D"
 )
 
 type Commit struct {
@@ -36,9 +39,9 @@ type Index struct {
 }
 
 type indexEntry struct {
-	Id     string
-	File   string
-	Status string
+	id     string
+	file   string
+	status string
 }
 
 func HashObject(obj string) (id string, objectType string) {
@@ -212,7 +215,7 @@ func formatHexId(obj string, objType string) (id string, objString string) {
 	return
 }
 
-func GetIndexEntries() Index {
+func GetIndex() Index {
 	index := Index{}
 
 	path := filepath.Join(cfg.GOT_REPO, cfg.INDEX_FILE)
@@ -229,9 +232,9 @@ func GetIndexEntries() Index {
 	for scanner.Scan() {
 		entryParts := strings.Split(scanner.Text(), " ")
 		entry := indexEntry{
-			Id:     entryParts[1],
-			File:   entryParts[2],
-			Status: entryParts[0],
+			id:     entryParts[1],
+			file:   entryParts[2],
+			status: entryParts[0],
 		}
 
 		index.entries = append(*&index.entries, entry)
@@ -242,7 +245,7 @@ func GetIndexEntries() Index {
 
 func (i *Index) IncludesFile(file string) (bool, int) {
     for idx, entry := range *&i.entries {
-        if entry.File == file {
+        if entry.file == file {
             return true, idx
         }
     }
@@ -250,11 +253,23 @@ func (i *Index) IncludesFile(file string) (bool, int) {
     return false, -1
 }
 
-func (i *Index) UpdateOrAdd(entry indexEntry) {
-    found, index := i.IncludesFile(entry.File)
+func (i *Index) UpdateOrAddFromFile(fileName string) {
+    blobId, _ := formatHexId(fileName, BLOB)
+
+    found, index := i.IncludesFile(fileName)
     if found {
-        i.entries[index] = entry
+        i.entries[index].id = blobId
         return
+    }
+
+    if !utils.Exists(fileName) {
+        utils.ExitWithError("No file named %q", fileName)
+    }
+
+    entry := indexEntry{
+        id: blobId,
+        file: fileName,
+        status: STATUS_ADD, // Need to implement logic to determine status
     }
 
     i.entries = append(i.entries, entry)
@@ -278,7 +293,7 @@ func (i *Index) Save() {
 
     contents := ""
     for _, entry := range *&i.entries {
-        contents += fmt.Sprintf("%v %v %v", entry.Status, entry.Id, entry.File)
+        contents += fmt.Sprintf("%v %v %v", entry.status, entry.id, entry.file)
     }
 
     fmt.Println(contents)
