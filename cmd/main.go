@@ -113,6 +113,28 @@ func AddCommand() *Command {
 	}
 }
 
+func RemoveCommand() *Command {
+	return &Command{
+		Name:  "remove",
+		Short: "Remove objects from the working directory",
+		Long:  "Remove files or directories from the index (staging area)",
+		Run: func(s []string) {
+			if len(s) < 1 {
+				utils.ExitWithError("Not enough arguments to add command")
+			}
+
+			index := got.GetIndex()
+
+			for _, file := range s {
+
+				index.RemoveFile(file)
+			}
+
+            index.Save()
+		},
+	}
+}
+
 func CommitCommand() *Command {
 	return &Command{
 		Name:  "commit",

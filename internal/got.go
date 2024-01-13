@@ -275,10 +275,20 @@ func (i *Index) UpdateOrAddFromFile(fileName string) {
     i.entries = append(i.entries, entry)
 }
 
-func (i *Index) Remove(file string) bool {
+func (i *Index) RemoveFile(file string) bool {
+    if !utils.Exists(file) {
+        utils.ExitWithError("File %q does not exist and cannot be removed", file)
+    }
+
+    err := os.Remove(file)
+    if err != nil {
+        utils.ExitWithError("Could not remove %q: ", file, err)
+    }
+
     found, idx := i.IncludesFile(file)
     if found {
-        i.entries = append(i.entries[:idx], i.entries[idx+1:]...)
+        // Currently removing file from index, later update status instead
+        i.entries = append(i.entries[:idx], i.entries[idx+1:]...) 
         return true
     }
 
