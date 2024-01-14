@@ -1,4 +1,4 @@
-package got_test
+package got
 
 import (
 	"bytes"
@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ljpurcell/got/internal"
 	cfg "github.com/ljpurcell/got/internal/config"
 	"github.com/ljpurcell/got/internal/utils"
 )
@@ -20,7 +19,6 @@ const text string = "These are some bytes to be written"
 
 func TestHashObjectForBlob(t *testing.T) {
 	file, err := createTempFileWithText(text)
-	defer cleanUpTempFile(file)
 	info, err := os.Stat(file.Name())
 
 	toHash := fmt.Sprintf("blob %d\u0000%v", info.Size(), text)
@@ -29,7 +27,7 @@ func TestHashObjectForBlob(t *testing.T) {
 	expectedId := hex.EncodeToString(hash.Sum(nil))
 	expectedType := "blob"
 
-	id, objectType := got.HashObject(file.Name())
+	id, objectType := HashObject(file.Name())
 
 	if id != expectedId {
 		t.Errorf("\nExp: %v. Actual: %v\n", expectedId, id)
@@ -67,10 +65,19 @@ func TestHashObjectForBlob(t *testing.T) {
 	if string(out) != string(text) {
 		t.Errorf("Exp: %v. Actual: %v", string(text), string(out))
 	}
+
+    t.Cleanup(func() {
+        file.Close()
+        os.Remove(file.Name())
+    })
+}
+
+func TestHashObjectForTree(t *testing.T) {
+    t.Skip("TODO: TestHashObjectForTree")
 }
 
 func TestIndex(t *testing.T) {
-	index := got.Index{}
+	index := Index{}
 
 	if index.Length() != 0 {
 		t.Errorf("Index length should be zero")
@@ -97,7 +104,7 @@ func TestIndex(t *testing.T) {
 
 	oldName, newName := file.Name(), "NEW_NAME"
 	if err := os.Rename(oldName, newName); err != nil {
-		t.Fatalf("Could not rename %q to %q: %v", file.Name(), "NEW_NAME", err)
+		t.Fatalf("Could not rename %q to %q: %v", oldName, newName, err)
 	}
 
 	index.UpdateOrAddFromFile(newName)
@@ -112,7 +119,20 @@ func TestIndex(t *testing.T) {
 		t.Errorf("Index length should be two")
 	}
 
+    if utils.Exists(cfg.INDEX_FILE) {
+        os.Remove(cfg.INDEX_FILE)
+    }
 
+    index.Save()
+
+    if !utils.Exists(cfg.INDEX_FILE) {
+        t.Fatalf("Index file does not exist after calling Save method")
+    }
+
+    t.Cleanup(func() {
+        file.Close()
+        os.Remove(file.Name())
+    })
 }
 
 func createTempFileWithText(text string) (*os.File, error) {
@@ -125,9 +145,4 @@ func createTempFileWithText(text string) (*os.File, error) {
 	file.Write(data)
 
 	return file, nil
-}
-
-func cleanUpTempFile(file *os.File) {
-	file.Close()
-	os.Remove(file.Name())
 }
