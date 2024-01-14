@@ -17,12 +17,12 @@ import (
 )
 
 const (
-	BLOB   = "blob"
-	TREE   = "tree"
-	COMMIT = "commit"
-    STATUS_ADD = "A"
-    STATUS_MODIFY = "M"
-    STATUS_DELETE = "D"
+	BLOB          = "blob"
+	TREE          = "tree"
+	COMMIT        = "commit"
+	STATUS_ADD    = "A"
+	STATUS_MODIFY = "M"
+	STATUS_DELETE = "D"
 )
 
 type Commit struct {
@@ -35,7 +35,7 @@ type Commit struct {
 }
 
 type Index struct {
-    entries []indexEntry
+	entries []indexEntry
 }
 
 type indexEntry struct {
@@ -244,68 +244,70 @@ func GetIndex() Index {
 }
 
 func (i *Index) IncludesFile(file string) (bool, int) {
-    for idx, entry := range *&i.entries {
-        if entry.file == file {
-            return true, idx
-        }
-    }
+	for idx, entry := range *&i.entries {
+		if entry.file == file {
+			return true, idx
+		}
+	}
 
-    return false, -1
+	return false, -1
 }
 
 func (i *Index) UpdateOrAddFromFile(fileName string) {
-    blobId, _ := formatHexId(fileName, BLOB)
+	blobId, _ := formatHexId(fileName, BLOB)
 
-    found, index := i.IncludesFile(fileName)
-    if found {
-        i.entries[index].id = blobId
-        return
-    }
+	found, index := i.IncludesFile(fileName)
+	if found {
+		i.entries[index].id = blobId
+		return
+	}
 
-    if !utils.Exists(fileName) {
-        utils.ExitWithError("No file named %q", fileName)
-    }
+	if !utils.Exists(fileName) {
+		utils.ExitWithError("No file named %q", fileName)
+	}
 
-    entry := indexEntry{
-        id: blobId,
-        file: fileName,
-        status: STATUS_ADD, // Need to implement logic to determine status
-    }
+	entry := indexEntry{
+		id:     blobId,
+		file:   fileName,
+		status: STATUS_ADD, // Need to implement logic to determine status
+	}
 
-    i.entries = append(i.entries, entry)
+	i.entries = append(i.entries, entry)
 }
 
 func (i *Index) RemoveFile(file string) bool {
-    if !utils.Exists(file) {
-        utils.ExitWithError("File %q does not exist and cannot be removed", file)
-    }
+	if utils.Exists(file) {
+		err := os.Remove(file)
+		if err != nil {
+			utils.ExitWithError("Could not remove %q: ", file, err)
+		}
+	}
 
-    err := os.Remove(file)
-    if err != nil {
-        utils.ExitWithError("Could not remove %q: ", file, err)
-    }
+	found, idx := i.IncludesFile(file)
+	if found {
+		// Currently removing file from index, later update status instead
+		i.entries = append(i.entries[:idx], i.entries[idx+1:]...)
+		return true
+	}
 
-    found, idx := i.IncludesFile(file)
-    if found {
-        // Currently removing file from index, later update status instead
-        i.entries = append(i.entries[:idx], i.entries[idx+1:]...) 
-        return true
-    }
-
-    return false
+	return false
 }
 
 func (i *Index) Save() {
 	path := filepath.Join(cfg.GOT_REPO, cfg.INDEX_FILE)
 	if utils.Exists(path) {
-        os.Truncate(path, 0)
+		os.Truncate(path, 0)
 	}
 
-    contents := ""
-    for _, entry := range *&i.entries {
-        contents += fmt.Sprintf("%v %v %v", entry.status, entry.id, entry.file)
-    }
+	contents := ""
+	for _, entry := range *&i.entries {
+		contents += fmt.Sprintf("%v %v %v", entry.status, entry.id, entry.file)
+	}
 
-    fmt.Println(contents)
-    os.WriteFile(path, []byte(contents), 0700)
+	fmt.Println(contents)
+	os.WriteFile(path, []byte(contents), 0700)
+}
+
+func (i *Index) Length() int {
+	return len(i.entries)
 }
