@@ -18,14 +18,20 @@ import (
 const text string = "These are some bytes to be written"
 
 func TestHashObjectForBlob(t *testing.T) {
-	file, err := createTempFileWithText(text)
+	tempDir := t.TempDir()
+	file, err := os.CreateTemp(tempDir, "temp_file_for_testing")
+	if err != nil {
+		t.Fatalf("Could not create temp file: %v", err)
+	}
+
+	file.Write([]byte(text))
 	info, err := os.Stat(file.Name())
 
-	toHash := fmt.Sprintf("blob %d\u0000%v", info.Size(), text)
+	expectedType := BLOB
+	toHash := fmt.Sprintf("%v %d\u0000%v", expectedType, info.Size(), text)
 	hash := sha1.New()
 	hash.Write([]byte(toHash))
 	expectedId := hex.EncodeToString(hash.Sum(nil))
-	expectedType := "blob"
 
 	id, objectType := HashObject(file.Name())
 
@@ -48,7 +54,7 @@ func TestHashObjectForBlob(t *testing.T) {
 		t.Errorf("No file for blob %v at %v in %v", id, blobFile, blobDir)
 	}
 
-    fileContents, err := os.ReadFile(blobFile)
+	fileContents, err := os.ReadFile(blobFile)
 	if err != nil {
 		t.Fatalf("Could not read contents from %v for decompression", blobFile)
 	}
@@ -66,27 +72,105 @@ func TestHashObjectForBlob(t *testing.T) {
 		t.Errorf("Exp: %v. Actual: %v", string(text), string(out))
 	}
 
-    t.Cleanup(func() {
-        file.Close()
-        os.Remove(file.Name())
-    })
+	t.Cleanup(func() {
+		file.Close()
+		os.Remove(file.Name())
+	})
 }
 
 func TestHashObjectForTree(t *testing.T) {
-    t.Skip("TODO: TestHashObjectForTree")
+	tempDir := t.TempDir()
+	file, err := os.CreateTemp(tempDir, "temp_file_for_testing")
+	if err != nil {
+		t.Fatalf("Could not create temp file: %v", err)
+	}
+
+	file.Write([]byte(text))
+
+    HashObject(file.Name())
+
+    files, err := os.ReadDir(tempDir)
+
+    tree := ""
+	for _, f := range files {
+		filePath := filepath.Join(tempDir, f.Name())
+		if f.IsDir() {
+			treeId := hashTree(filePath)
+			tree += fmt.Sprintf("%v tree %v %v\n", 100644, treeId, f.Name())
+		} else {
+			blobId := hashBlob(filePath)
+			tree += fmt.Sprintf("%v blob %v %v\n", 100644, blobId, f.Name())
+		}
+	}
+
+
+    expectedType := TREE
+	size := len(tree)
+    objString := fmt.Sprintf("%v %d\u0000%v", expectedType, size, tree)
+	hasher := sha1.New()
+	hasher.Write([]byte(objString))
+    expectedId := hex.EncodeToString(hasher.Sum(nil))
+
+	id, objectType := HashObject(tempDir)
+
+	if id != expectedId {
+		t.Errorf("\nExp: %v. Actual: %v\n", expectedId, id)
+	}
+
+	if objectType != expectedType {
+		t.Errorf("\nExp: %v. Actual: %v\n", expectedType, objectType)
+	}
+
+	treeDir := filepath.Join(cfg.GOT_REPO, "objects", id[:2])
+	treeFile := filepath.Join(treeDir, id[2:])
+
+	if !utils.Exists(treeDir) || !utils.IsDir(treeDir) {
+		t.Errorf("No directory for tree %v at %v", id, treeDir)
+	}
+
+	if !utils.Exists(treeFile) && !utils.IsDir(treeDir) {
+		t.Errorf("No file for tree %v at %v in %v", id, treeFile, treeDir)
+	}
+
+	fileContents, err := os.ReadFile(treeFile)
+	if err != nil {
+		t.Fatalf("Could not read contents from %v for decompression", treeFile)
+	}
+
+	data := bytes.NewReader(fileContents)
+	dec, err := zlib.NewReader(data)
+	if err != nil {
+		t.Fatalf("Could not create ZLIB reader: %v", err)
+	}
+	dec.Close()
+
+	out, err := io.ReadAll(dec)
+
+	if string(out) != string(text) {
+        // TODO
+	}
+
+	t.Cleanup(func() {
+		file.Close()
+		os.Remove(file.Name())
+	})
 }
 
 func TestIndex(t *testing.T) {
-	index := Index{}
+	os.Remove(cfg.INDEX_FILE)
+	index := GetIndex()
 
 	if index.Length() != 0 {
 		t.Errorf("Index length should be zero")
 	}
 
-	file, err := createTempFileWithText(text)
+	tempDir := t.TempDir()
+	file, err := os.CreateTemp(tempDir, "temp_file_for_testing")
 	if err != nil {
-		t.Fatalf("Could not create temp tile in TestIndex: %v", err)
+		t.Fatalf("Could not create temp file: %v", err)
 	}
+
+	file.Write([]byte(text))
 
 	index.UpdateOrAddFromFile(file.Name())
 
@@ -119,30 +203,18 @@ func TestIndex(t *testing.T) {
 		t.Errorf("Index length should be two")
 	}
 
-    if utils.Exists(cfg.INDEX_FILE) {
-        os.Remove(cfg.INDEX_FILE)
-    }
-
-    index.Save()
-
-    if !utils.Exists(cfg.INDEX_FILE) {
-        t.Fatalf("Index file does not exist after calling Save method")
-    }
-
-    t.Cleanup(func() {
-        file.Close()
-        os.Remove(file.Name())
-    })
-}
-
-func createTempFileWithText(text string) (*os.File, error) {
-	file, err := os.CreateTemp(".", "temp_file_for_testing")
-	if err != nil {
-		return nil, fmt.Errorf("Could not create temp file: %v", err)
+	if utils.Exists(cfg.INDEX_FILE) {
+		os.Remove(cfg.INDEX_FILE)
 	}
 
-	data := []byte(text)
-	file.Write(data)
+	index.Save()
 
-	return file, nil
+	if !utils.Exists(cfg.INDEX_FILE) {
+		t.Fatalf("Index file does not exist after calling Save method")
+	}
+
+	t.Cleanup(func() {
+		file.Close()
+		os.Remove(file.Name())
+	})
 }
