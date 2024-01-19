@@ -87,11 +87,11 @@ func TestHashObjectForTree(t *testing.T) {
 
 	file.Write([]byte(text))
 
-    HashObject(file.Name())
+	HashObject(file.Name())
 
-    files, err := os.ReadDir(tempDir)
+	files, err := os.ReadDir(tempDir)
 
-    tree := ""
+	tree := ""
 	for _, f := range files {
 		filePath := filepath.Join(tempDir, f.Name())
 		if f.IsDir() {
@@ -103,13 +103,12 @@ func TestHashObjectForTree(t *testing.T) {
 		}
 	}
 
-
-    expectedType := TREE
+	expectedType := TREE
 	size := len(tree)
-    objString := fmt.Sprintf("%v %d\u0000%v", expectedType, size, tree)
+	objString := fmt.Sprintf("%v %d\u0000%v", expectedType, size, tree)
 	hasher := sha1.New()
 	hasher.Write([]byte(objString))
-    expectedId := hex.EncodeToString(hasher.Sum(nil))
+	expectedId := hex.EncodeToString(hasher.Sum(nil))
 
 	id, objectType := HashObject(tempDir)
 
@@ -147,7 +146,7 @@ func TestHashObjectForTree(t *testing.T) {
 	out, err := io.ReadAll(dec)
 
 	if string(out) != string(text) {
-        // TODO
+		// TODO
 	}
 
 	t.Cleanup(func() {
@@ -217,4 +216,23 @@ func TestIndex(t *testing.T) {
 		file.Close()
 		os.Remove(file.Name())
 	})
+}
+
+func BenchmarkHashObject(b *testing.B) {
+	tempDir := os.TempDir()
+	file, err := os.CreateTemp(tempDir, "temp_file_for_testing")
+	if err != nil {
+		b.Fatalf("Could not create temp file: %v", err)
+	}
+
+	file.Write([]byte(text))
+
+    for i := 0; i < b.N; i++ {
+        HashObject(file.Name())
+    }
+
+    b.Cleanup(func() {
+        file.Close()
+        os.Remove(file.Name())
+    })
 }
