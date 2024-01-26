@@ -25,6 +25,8 @@ const (
 	STATUS_DELETE = "D"
 )
 
+var StagingIndex Index
+
 type Commit struct {
 	Id        string
 	Author    string
@@ -39,9 +41,21 @@ type Index struct {
 }
 
 type indexEntry struct {
-	id     string
-	file   string
-	status string
+	Id     string
+	File   string
+	Status string
+}
+
+func FindObject(id string) {
+	db := filepath.Join(cfg.GOT_REPO, "objects")
+	objects, err := os.ReadDir(db)
+	if err != nil {
+		utils.ExitWithError("Could not read %q: %v", db, err)
+	}
+
+	for i, f := range objects {
+		fmt.Printf("%v: %v\n", i, f)
+	}
 }
 
 func HashObject(obj string) (id string, objectType string) {
@@ -215,15 +229,24 @@ func formatHexId(obj string, objType string) (id string, objString string) {
 	return
 }
 
+func (i *Index) Entries() []indexEntry {
+	return i.entries
+}
+
+func (i *Index) Clear() {
+	if err := os.Truncate(cfg.INDEX_FILE, 0); err != nil {
+		utils.ExitWithError("Could not clear index file: %v", err)
+	}
+}
+
 func GetIndex() Index {
 	index := Index{}
 
-	path := filepath.Join(cfg.GOT_REPO, cfg.INDEX_FILE)
-	if !utils.Exists(path) {
+	if !utils.Exists(cfg.INDEX_FILE) {
 		return index
 	}
 
-	indexFile, err := os.Open(path)
+	indexFile, err := os.Open(cfg.INDEX_FILE)
 	if err != nil {
 		utils.ExitWithError("Could not open index file: %v", err)
 	}
@@ -232,9 +255,9 @@ func GetIndex() Index {
 	for scanner.Scan() {
 		entryParts := strings.Split(scanner.Text(), " ")
 		entry := indexEntry{
-			id:     entryParts[1],
-			file:   entryParts[2],
-			status: entryParts[0],
+			Id:     entryParts[1],
+			File:   entryParts[2],
+			Status: entryParts[0],
 		}
 
 		index.entries = append(*&index.entries, entry)
@@ -245,7 +268,7 @@ func GetIndex() Index {
 
 func (i *Index) IncludesFile(file string) (bool, int) {
 	for idx, entry := range *&i.entries {
-		if entry.file == file {
+		if entry.File == file {
 			return true, idx
 		}
 	}
@@ -258,7 +281,7 @@ func (i *Index) UpdateOrAddFromFile(fileName string) {
 
 	found, index := i.IncludesFile(fileName)
 	if found {
-		i.entries[index].id = blobId
+		i.entries[index].Id = blobId
 		return
 	}
 
@@ -267,9 +290,9 @@ func (i *Index) UpdateOrAddFromFile(fileName string) {
 	}
 
 	entry := indexEntry{
-		id:     blobId,
-		file:   fileName,
-		status: STATUS_ADD, // Need to implement logic to determine status
+		Id:     blobId,
+		File:   fileName,
+		Status: STATUS_ADD, // Need to implement logic to determine status
 	}
 
 	i.entries = append(i.entries, entry)
@@ -294,18 +317,16 @@ func (i *Index) RemoveFile(file string) bool {
 }
 
 func (i *Index) Save() {
-	path := filepath.Join(cfg.GOT_REPO, cfg.INDEX_FILE)
-	if utils.Exists(path) {
-		os.Truncate(path, 0)
+	if utils.Exists(cfg.INDEX_FILE) {
+		os.Truncate(cfg.INDEX_FILE, 0)
 	}
 
 	contents := ""
 	for _, entry := range *&i.entries {
-		contents += fmt.Sprintf("%v %v %v", entry.status, entry.id, entry.file)
+		contents += fmt.Sprintf("%v %v %v", entry.Status, entry.Id, entry.File)
 	}
 
-	fmt.Println(contents)
-	os.WriteFile(path, []byte(contents), 0700)
+	os.WriteFile(cfg.INDEX_FILE, []byte(contents), 0700)
 }
 
 func (i *Index) Length() int {

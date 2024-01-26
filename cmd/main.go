@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/sha1"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -43,6 +42,8 @@ func Execute() {
 		cmd = AddCommand()
 	case "commit":
 		cmd = CommitCommand()
+	case "checkout":
+		cmd = CheckoutCommand()
 	default:
 		cmd = UnknownCommand(subCmd)
 	}
@@ -108,7 +109,7 @@ func AddCommand() *Command {
 				index.UpdateOrAddFromFile(file)
 			}
 
-            index.Save()
+			index.Save()
 		},
 	}
 }
@@ -130,7 +131,7 @@ func RemoveCommand() *Command {
 				index.RemoveFile(file)
 			}
 
-            index.Save()
+			index.Save()
 		},
 	}
 }
@@ -146,28 +147,16 @@ func CommitCommand() *Command {
 			}
 
 			// 1. Generate an up to date tree hash for all listings in index
-			indexPath := filepath.Join(cfg.GOT_REPO, "index")
+			index := got.GetIndex()
 
-			if !utils.Exists(indexPath) {
-				utils.ExitWithError("No index file. Nothing staged to commit")
-			}
-
-			index, err := os.Open(indexPath)
-			if err != nil {
-				utils.ExitWithError("Could not open index for commit command: %v", err)
-			}
-			indexMap := make(map[string]string)
-			decoder := json.NewDecoder(index)
-			decoder.Decode(&indexMap)
-
-			if len(indexMap) == 0 {
+			if index.Length() == 0 {
 				utils.ExitWithError("Index file empty. Nothing staged to commit")
 			}
 
 			var tree string
-			for file := range indexMap {
-				id, objectType := got.HashObject(file)
-				tree += fmt.Sprintf("%v %v %v %v\n", 100644, id, objectType, file)
+			for _, entry := range index.Entries() {
+				id, objectType := got.HashObject(entry.File)
+				tree += fmt.Sprintf("%v %v %v %v\n", 100644, id, objectType, entry)
 			}
 
 			toHash := fmt.Sprintf("tree %d\u0000%v", len(tree), tree)
@@ -200,9 +189,7 @@ func CommitCommand() *Command {
 
 			// Post Commit:
 			// 1. Clear index
-			if err := os.Truncate(indexPath, 0); err != nil {
-				utils.ExitWithError("Could not clear index file: %v", err)
-			}
+			index.Clear()
 
 			// 2. Update hash pointed at in HEAD
 			if utils.Exists(path) {
@@ -214,6 +201,32 @@ func CommitCommand() *Command {
 			if err := os.WriteFile(path, []byte(commit.Id), READ_WRITE_PERM); err != nil {
 				utils.ExitWithError("Could not write commit id %v to %v file: %v", commit.Id, path, err)
 			}
+		},
+	}
+}
+
+func CheckoutCommand() *Command {
+	return &Command{
+		Name:  "checkout",
+		Short: "Checkout a specific commit",
+		Long:  "Checkout a specific commit, causing the working directory to revert to the state contained in the commit",
+		Run: func(s []string) {
+			if len(s) != 1 {
+				utils.ExitWithError("You can only pass exactly one argument [commit hash] to this command")
+			}
+
+			id := s[0]
+
+			if len(id) < 6 {
+				utils.ExitWithError("You must provid at least 6 characters of the commit ID")
+			}
+
+			// 1. Search for commit object
+			got.FindObject(id)
+
+			// 2. Decompress and restore working directory
+
+			// 3. Update HEAD to point at provided commit
 		},
 	}
 }
