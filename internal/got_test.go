@@ -218,21 +218,30 @@ func TestIndex(t *testing.T) {
 	})
 }
 
-func BenchmarkHashObject(b *testing.B) {
-	tempDir := os.TempDir()
-	file, err := os.CreateTemp(tempDir, "temp_file_for_testing")
+func BenchmarkHashBlob(b *testing.B) {
+	pwd, err := os.Getwd()
 	if err != nil {
-		b.Fatalf("Could not create temp file: %v", err)
+		b.Fatalf("Could not get current directory: %v", err)
 	}
 
-	file.Write([]byte(text))
+	parent := filepath.Dir(pwd)
+	tFile := filepath.Join(parent, "testdata", "test_file.txt")
 
-    for i := 0; i < b.N; i++ {
-        HashObject(file.Name())
-    }
+	for i := 0; i < b.N; i++ {
+		hashBlob(tFile)
+	}
+}
 
-    b.Cleanup(func() {
-        file.Close()
-        os.Remove(file.Name())
-    })
+func BenchmarkHashTree(b *testing.B) {
+	pwd, err := os.Getwd()
+	if err != nil {
+		b.Fatalf("Could not get current directory: %v", err)
+	}
+
+	parent := filepath.Dir(pwd)
+	testdata := filepath.Join(parent, "testdata")
+
+	for i := 0; i < b.N; i++ {
+		hashTree(testdata)
+	}
 }
