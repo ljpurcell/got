@@ -42,20 +42,36 @@ type Index struct {
 
 type indexEntry struct {
 	Id     string
-	File   string
+	Name   string
+	IsDir  bool
 	Status string
 }
 
-func FindObject(id string) {
+func GetObjectFile(id string) (*os.File, error) {
 	db := filepath.Join(cfg.GOT_REPO, "objects")
 	objects, err := os.ReadDir(db)
 	if err != nil {
 		utils.ExitWithError("Could not read %q: %v", db, err)
 	}
 
-	for i, f := range objects {
-		fmt.Printf("%v: %v\n", i, f)
+	for _, dir := range objects {
+		if dir.Name() == id[:2] {
+			dPath := filepath.Join(db, dir.Name())
+			files, err := os.ReadDir(dPath)
+			if err != nil {
+				utils.ExitWithError("Could not read %q: %v", dir.Name(), err)
+			}
+
+			for _, file := range files {
+				if strings.HasPrefix(file.Name(), id[2:]) {
+					fPath := filepath.Join(dPath, file.Name())
+					return os.Open(fPath)
+				}
+			}
+		}
 	}
+
+	return nil, fmt.Errorf("Could not find object file for %q\n", id)
 }
 
 func HashObject(obj string) (id string, objectType string) {
@@ -222,7 +238,7 @@ func formatHexId(obj string, objType string) (id string, objString string) {
 		content = string(fileContents)
 	}
 
-	objString = fmt.Sprintf("%v %d\u0000%v", objType, size, content)
+	objString = fmt.Sprintf("%v %d %v", objType, size, content)
 	hasher := sha1.New()
 	hasher.Write([]byte(objString))
 	id = hex.EncodeToString(hasher.Sum(nil))
@@ -256,19 +272,19 @@ func GetIndex() Index {
 		entryParts := strings.Split(scanner.Text(), " ")
 		entry := indexEntry{
 			Id:     entryParts[1],
-			File:   entryParts[2],
+			Name:   entryParts[2],
 			Status: entryParts[0],
 		}
 
-		index.entries = append(*&index.entries, entry)
+		index.entries = append(index.entries, entry)
 	}
 
 	return index
 }
 
 func (i *Index) IncludesFile(file string) (bool, int) {
-	for idx, entry := range *&i.entries {
-		if entry.File == file {
+	for idx, entry := range i.entries {
+		if entry.Name == file {
 			return true, idx
 		}
 	}
@@ -276,26 +292,50 @@ func (i *Index) IncludesFile(file string) (bool, int) {
 	return false, -1
 }
 
-func (i *Index) UpdateOrAddFromFile(fileName string) {
-	blobId, _ := formatHexId(fileName, BLOB)
+func (i *Index) UpdateOrAddEntry(path string) {
 
-	found, index := i.IncludesFile(fileName)
-	if found {
-		i.entries[index].Id = blobId
-		return
+	files := []string{path}
+
+	if utils.IsDir(path) {
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			utils.ExitWithError("Could not read dir entries: %v\n", err)
+		}
+
+		files = []string{}
+
+		for _, entry := range entries {
+			nestedPath := filepath.Join(path, entry.Name())
+			if entry.IsDir() {
+				i.UpdateOrAddEntry(nestedPath)
+			} else {
+				files = append(files, nestedPath)
+			}
+		}
 	}
 
-	if !utils.Exists(fileName) {
-		utils.ExitWithError("No file named %q", fileName)
-	}
+	for _, fName := range files {
+		if !utils.Exists(fName) {
+			utils.ExitWithError("No file named %q", fName)
+		}
 
-	entry := indexEntry{
-		Id:     blobId,
-		File:   fileName,
-		Status: STATUS_ADD, // Need to implement logic to determine status
-	}
+		blobId, _ := formatHexId(fName, BLOB)
 
-	i.entries = append(i.entries, entry)
+		found, index := i.IncludesFile(path)
+		if found {
+			i.entries[index].Id = blobId
+			return
+		}
+
+		entry := indexEntry{
+			Id:     blobId,
+			Name:   path,
+			IsDir:  false,
+			Status: STATUS_ADD, // Need to implement logic to determine status
+		}
+
+		i.entries = append(i.entries, entry)
+	}
 }
 
 func (i *Index) RemoveFile(file string) bool {
@@ -323,7 +363,7 @@ func (i *Index) Save() {
 
 	contents := ""
 	for _, entry := range *&i.entries {
-		contents += fmt.Sprintf("%v %v %v", entry.Status, entry.Id, entry.File)
+		contents += fmt.Sprintf("%v %v %v\n", entry.Status, entry.Id, entry.Name)
 	}
 
 	os.WriteFile(cfg.INDEX_FILE, []byte(contents), 0700)

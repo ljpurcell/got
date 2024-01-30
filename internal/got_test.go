@@ -28,7 +28,7 @@ func TestHashObjectForBlob(t *testing.T) {
 	info, err := os.Stat(file.Name())
 
 	expectedType := BLOB
-	toHash := fmt.Sprintf("%v %d\u0000%v", expectedType, info.Size(), text)
+	toHash := fmt.Sprintf("%v %d %v", expectedType, info.Size(), text)
 	hash := sha1.New()
 	hash.Write([]byte(toHash))
 	expectedId := hex.EncodeToString(hash.Sum(nil))
@@ -105,7 +105,7 @@ func TestHashObjectForTree(t *testing.T) {
 
 	expectedType := TREE
 	size := len(tree)
-	objString := fmt.Sprintf("%v %d\u0000%v", expectedType, size, tree)
+	objString := fmt.Sprintf("%v %d %v", expectedType, size, tree)
 	hasher := sha1.New()
 	hasher.Write([]byte(objString))
 	expectedId := hex.EncodeToString(hasher.Sum(nil))
@@ -171,7 +171,7 @@ func TestIndex(t *testing.T) {
 
 	file.Write([]byte(text))
 
-	index.UpdateOrAddFromFile(file.Name())
+	index.UpdateOrAddEntry(file.Name())
 
 	if index.Length() != 1 {
 		t.Errorf("Index length should be one")
@@ -179,7 +179,7 @@ func TestIndex(t *testing.T) {
 
 	file.WriteString("This is some different text")
 
-	index.UpdateOrAddFromFile(file.Name())
+	index.UpdateOrAddEntry(file.Name())
 
 	if index.Length() != 1 {
 		t.Errorf("Index length should be one")
@@ -190,7 +190,7 @@ func TestIndex(t *testing.T) {
 		t.Fatalf("Could not rename %q to %q: %v", oldName, newName, err)
 	}
 
-	index.UpdateOrAddFromFile(newName)
+	index.UpdateOrAddEntry(newName)
 
 	if index.Length() != 2 {
 		t.Errorf("Index length should be two")
