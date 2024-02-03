@@ -1,9 +1,10 @@
 package main
 
 import (
-	"crypto/sha1"
-	"encoding/hex"
+	"bytes"
+	"compress/zlib"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,7 +107,7 @@ func AddCommand() *Command {
 
 			for _, file := range s {
 
-				index.UpdateOrAddFromFile(file)
+				index.UpdateOrAddEntry(file)
 			}
 
 			index.Save()
@@ -155,14 +156,32 @@ func CommitCommand() *Command {
 
 			var tree string
 			for _, entry := range index.Entries() {
-				id, objectType := got.HashObject(entry.File)
-				tree += fmt.Sprintf("%v %v %v %v\n", 100644, id, objectType, entry)
+				id, objectType := got.WriteObject(entry.Name)
+				tree += fmt.Sprintf("%v %v %v %v\n", 100644, id, objectType, entry.Name)
 			}
 
-			toHash := fmt.Sprintf("tree %d\u0000%v", len(tree), tree)
-			hasher := sha1.New()
-			hasher.Write([]byte(toHash))
-			snapshotId := hex.EncodeToString(hasher.Sum(nil))
+			id, treeString := got.FormatHexId(tree, got.TREE)
+
+			objDir := filepath.Join(cfg.GOT_REPO, "objects", id[:2])
+			objFile := filepath.Join(objDir, id[2:])
+
+			os.MkdirAll(objDir, 0700)
+			file, err := os.Create(objFile)
+			if err != nil {
+				utils.ExitWithError("Could not write tree of index using name %q in directory %q", objFile, objDir)
+			}
+
+			defer file.Close()
+
+			var b bytes.Buffer
+			compressor := zlib.NewWriter(&b)
+			compressor.Write([]byte(treeString))
+			compressor.Close()
+
+			err = os.WriteFile(objFile, b.Bytes(), 0700)
+			if err != nil {
+				utils.ExitWithError("Could not write compressed contents of index to %v", objFile)
+			}
 
 			// 2. get parent commit, if Exists
 			headRef, err := os.ReadFile(filepath.Join(cfg.GOT_REPO, "HEAD"))
@@ -185,7 +204,7 @@ func CommitCommand() *Command {
 			}
 
 			// 3. Create commit
-			commit := got.CreateCommit(snapshotId, parentId, s[0])
+			commit := got.CreateCommit(id, parentId, s[0])
 
 			// Post Commit:
 			// 1. Clear index
@@ -222,9 +241,24 @@ func CheckoutCommand() *Command {
 			}
 
 			// 1. Search for commit object
-			got.FindObject(id)
+			file, err := got.GetObjectFile(id)
+			if err != nil {
+				utils.ExitWithError("Error getting object file for checkout command: %v", err)
+			}
 
 			// 2. Decompress and restore working directory
+			decompressor, err := zlib.NewReader(file)
+			if err != nil {
+				utils.ExitWithError("Could not create decompressor %v: ", err)
+			}
+			decompressor.Close()
+			var out bytes.Buffer
+			io.Copy(&out, decompressor)
+
+			lines := strings.Split(out.String(), "\n")
+			for _, line := range lines {
+				fmt.Println(line + "\n")
+			}
 
 			// 3. Update HEAD to point at provided commit
 		},
