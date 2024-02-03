@@ -76,17 +76,17 @@ func GetObjectFile(id string) (*os.File, error) {
 
 func HashObject(obj string) (id string, objectType string) {
 	if utils.IsDir(obj) {
-		id = hashTree(obj)
+		id = writeTree(obj)
 		objectType = TREE
 		return
 	}
 
-	id = hashBlob(obj)
+	id = writeBlob(obj)
 	objectType = BLOB
 	return
 }
 
-func hashBlob(fileName string) string {
+func writeBlob(fileName string) string {
 	if !utils.Exists(fileName) {
 		utils.ExitWithError("Cannot hash %q. Object doesn't exist", fileName)
 	}
@@ -126,7 +126,7 @@ func hashBlob(fileName string) string {
 	return id
 }
 
-func hashTree(dir string) string {
+func writeTree(dir string) string {
 	if !utils.Exists(dir) {
 		utils.ExitWithError("Cannot hash %q. Object doesn't exist", dir)
 	}
@@ -144,10 +144,10 @@ func hashTree(dir string) string {
 	for _, file := range files {
 		filePath := filepath.Join(dir, file.Name())
 		if file.IsDir() {
-			treeId := hashTree(filePath)
+			treeId := writeTree(filePath)
 			tree += fmt.Sprintf("%v tree %v %v\n", 100644, treeId, file.Name())
 		} else {
-			blobId := hashBlob(filePath)
+			blobId := writeBlob(filePath)
 			tree += fmt.Sprintf("%v blob %v %v\n", 100644, blobId, file.Name())
 		}
 

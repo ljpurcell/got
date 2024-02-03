@@ -95,10 +95,10 @@ func TestHashObjectForTree(t *testing.T) {
 	for _, f := range files {
 		filePath := filepath.Join(tempDir, f.Name())
 		if f.IsDir() {
-			treeId := hashTree(filePath)
+			treeId := writeTree(filePath)
 			tree += fmt.Sprintf("%v tree %v %v\n", 100644, treeId, f.Name())
 		} else {
-			blobId := hashBlob(filePath)
+			blobId := writeBlob(filePath)
 			tree += fmt.Sprintf("%v blob %v %v\n", 100644, blobId, f.Name())
 		}
 	}
@@ -228,7 +228,7 @@ func BenchmarkHashBlob(b *testing.B) {
 	tFile := filepath.Join(parent, "testdata", "test_file.txt")
 
 	for i := 0; i < b.N; i++ {
-		hashBlob(tFile)
+		writeBlob(tFile)
 	}
 }
 
@@ -242,6 +242,6 @@ func BenchmarkHashTree(b *testing.B) {
 	testdata := filepath.Join(parent, "testdata")
 
 	for i := 0; i < b.N; i++ {
-		hashTree(testdata)
+		writeTree(testdata)
 	}
 }
