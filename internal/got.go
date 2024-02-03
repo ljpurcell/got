@@ -95,7 +95,7 @@ func writeBlob(fileName string) string {
 		utils.ExitWithError("Cannot call hash blob on %q. Object is a directory", fileName)
 	}
 
-	id, _ := FormatHexId(fileName, BLOB)
+	id, blobString := FormatHexId(fileName, BLOB)
 
 	objDir := filepath.Join(cfg.GOT_REPO, "objects", id[:2])
 	objFile := filepath.Join(objDir, id[2:])
@@ -108,14 +108,9 @@ func writeBlob(fileName string) string {
 
 	defer file.Close()
 
-	fileContents, err := os.ReadFile(fileName)
-	if err != nil {
-		utils.ExitWithError("Could not read contents from file %v for compression", fileName)
-	}
-
 	var b bytes.Buffer
 	compressor := zlib.NewWriter(&b)
-	compressor.Write([]byte(fileContents))
+	compressor.Write([]byte(blobString))
 	compressor.Close()
 
 	err = os.WriteFile(objFile, b.Bytes(), 0700)
@@ -189,7 +184,7 @@ func CreateCommit(tree string, parentId string, msg string) *Commit {
 
 	data := fmt.Sprintf("tree %v\n%v\ncommiter %v\n\n%v", tree, parentListing, committer, msg)
 
-	id, commitString := FormatHexId(data, "commit")
+	id, commitString := FormatHexId(data, COMMIT)
 
 	objDir := filepath.Join(cfg.GOT_REPO, "objects", id[:2])
 	objFile := filepath.Join(objDir, id[2:])
@@ -238,7 +233,7 @@ func FormatHexId(obj string, objType string) (id string, objString string) {
 		content = string(fileContents)
 	}
 
-	objString = fmt.Sprintf("%v %d %v\n", objType, size, content)
+	objString = fmt.Sprintf("%v %d\n%v", objType, size, content)
 	hasher := sha1.New()
 	hasher.Write([]byte(objString))
 	id = hex.EncodeToString(hasher.Sum(nil))
