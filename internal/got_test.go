@@ -33,7 +33,7 @@ func TestHashObjectForBlob(t *testing.T) {
 	hash.Write([]byte(toHash))
 	expectedId := hex.EncodeToString(hash.Sum(nil))
 
-	id, objectType := HashObject(file.Name())
+	id, objectType := WriteObject(file.Name())
 
 	if id != expectedId {
 		t.Errorf("\nExp: %v. Actual: %v\n", expectedId, id)
@@ -87,7 +87,7 @@ func TestHashObjectForTree(t *testing.T) {
 
 	file.Write([]byte(text))
 
-	HashObject(file.Name())
+	WriteObject(file.Name())
 
 	files, err := os.ReadDir(tempDir)
 
@@ -110,7 +110,7 @@ func TestHashObjectForTree(t *testing.T) {
 	hasher.Write([]byte(objString))
 	expectedId := hex.EncodeToString(hasher.Sum(nil))
 
-	id, objectType := HashObject(tempDir)
+	id, objectType := WriteObject(tempDir)
 
 	if id != expectedId {
 		t.Errorf("\nExp: %v. Actual: %v\n", expectedId, id)

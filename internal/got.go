@@ -74,7 +74,7 @@ func GetObjectFile(id string) (*os.File, error) {
 	return nil, fmt.Errorf("Could not find object file for %q\n", id)
 }
 
-func HashObject(obj string) (id string, objectType string) {
+func WriteObject(obj string) (id string, objectType string) {
 	if utils.IsDir(obj) {
 		id = writeTree(obj)
 		objectType = TREE
@@ -95,7 +95,7 @@ func writeBlob(fileName string) string {
 		utils.ExitWithError("Cannot call hash blob on %q. Object is a directory", fileName)
 	}
 
-	id, _ := formatHexId(fileName, BLOB)
+	id, _ := FormatHexId(fileName, BLOB)
 
 	objDir := filepath.Join(cfg.GOT_REPO, "objects", id[:2])
 	objFile := filepath.Join(objDir, id[2:])
@@ -153,7 +153,7 @@ func writeTree(dir string) string {
 
 	}
 
-	id, treeString := formatHexId(tree, TREE)
+	id, treeString := FormatHexId(tree, TREE)
 
 	objDir := filepath.Join(cfg.GOT_REPO, "objects", id[:2])
 	objFile := filepath.Join(objDir, id[2:])
@@ -189,7 +189,7 @@ func CreateCommit(tree string, parentId string, msg string) *Commit {
 
 	data := fmt.Sprintf("tree %v\n%v\ncommiter %v\n\n%v", tree, parentListing, committer, msg)
 
-	id, commitString := formatHexId(data, "commit")
+	id, commitString := FormatHexId(data, "commit")
 
 	objDir := filepath.Join(cfg.GOT_REPO, "objects", id[:2])
 	objFile := filepath.Join(objDir, id[2:])
@@ -222,10 +222,10 @@ func CreateCommit(tree string, parentId string, msg string) *Commit {
 	}
 }
 
-func formatHexId(obj string, objType string) (id string, objString string) {
+func FormatHexId(obj string, objType string) (id string, objString string) {
 
 	size, content := len(obj), obj
-	if objType == "blob" {
+	if objType == BLOB {
 		fileContents, err := os.ReadFile(obj)
 		if err != nil {
 			utils.ExitWithError("Could not read file %v: %v", obj, err)
@@ -238,7 +238,7 @@ func formatHexId(obj string, objType string) (id string, objString string) {
 		content = string(fileContents)
 	}
 
-	objString = fmt.Sprintf("%v %d %v", objType, size, content)
+	objString = fmt.Sprintf("%v %d %v\n", objType, size, content)
 	hasher := sha1.New()
 	hasher.Write([]byte(objString))
 	id = hex.EncodeToString(hasher.Sum(nil))
@@ -319,7 +319,7 @@ func (i *Index) UpdateOrAddEntry(path string) {
 			utils.ExitWithError("No file named %q", fName)
 		}
 
-		blobId, _ := formatHexId(fName, BLOB)
+		blobId, _ := FormatHexId(fName, BLOB)
 
 		found, index := i.IncludesFile(path)
 		if found {
