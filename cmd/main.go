@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	got "github.com/ljpurcell/got/internal"
@@ -154,10 +155,22 @@ func CommitCommand() *Command {
 				utils.ExitWithError("Index file empty. Nothing staged to commit")
 			}
 
+            entryNames := make([]string, index.Length())
+
+            for i, entry := range index.Entries() {
+                entryNames[i] = entry.Name
+            }
+
+            fmt.Printf("%v", entryNames)
+
+            slices.Sort(entryNames)
+
+            fmt.Printf("%v", entryNames)
+
 			var tree string
-			for _, entry := range index.Entries() {
-				id, objectType := got.WriteObject(entry.Name)
-				tree += fmt.Sprintf("%v %v %v %v\n", 100644, id, objectType, entry.Name)
+			for _, name := range entryNames {
+				id, objectType := got.WriteObject(name)
+				tree += fmt.Sprintf("%v %v %v %v\n", 100644, objectType, id, name)
 			}
 
 			id, treeString := got.FormatHexId(tree, got.TREE)
