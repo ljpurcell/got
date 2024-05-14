@@ -17,7 +17,7 @@ import (
 
 const text string = "These are some bytes to be written"
 
-func TestHashObjectForBlob(t *testing.T) {
+func TestWriteObjectForBlob(t *testing.T) {
 	tempDir := t.TempDir()
 	file, err := os.CreateTemp(tempDir, "temp_file_for_testing")
 	if err != nil {
@@ -28,7 +28,7 @@ func TestHashObjectForBlob(t *testing.T) {
 	info, err := os.Stat(file.Name())
 
 	expectedType := BLOB
-	toHash := fmt.Sprintf("%v %d %v", expectedType, info.Size(), text)
+	toHash := fmt.Sprintf("%v %d\n%v", expectedType, info.Size(), text)
 	hash := sha1.New()
 	hash.Write([]byte(toHash))
 	expectedId := hex.EncodeToString(hash.Sum(nil))
@@ -66,10 +66,12 @@ func TestHashObjectForBlob(t *testing.T) {
 	}
 	dec.Close()
 
-	out, err := io.ReadAll(dec)
+	result, err := io.ReadAll(dec)
 
-	if string(out) != string(text) {
-		t.Errorf("Exp: %v. Actual: %v", string(text), string(out))
+	actual := fmt.Sprintf("%v %d\n%v", BLOB, len(text), text)
+
+	if string(result) != string(actual) {
+		t.Errorf("Exp: %v. Actual: %v", string(actual), string(result))
 	}
 
 	t.Cleanup(func() {
@@ -78,7 +80,7 @@ func TestHashObjectForBlob(t *testing.T) {
 	})
 }
 
-func TestHashObjectForTree(t *testing.T) {
+func TestWriteObjectForTree(t *testing.T) {
 	tempDir := t.TempDir()
 	file, err := os.CreateTemp(tempDir, "temp_file_for_testing")
 	if err != nil {
@@ -105,7 +107,7 @@ func TestHashObjectForTree(t *testing.T) {
 
 	expectedType := TREE
 	size := len(tree)
-	objString := fmt.Sprintf("%v %d %v", expectedType, size, tree)
+	objString := fmt.Sprintf("%v %d\n%v", expectedType, size, tree)
 	hasher := sha1.New()
 	hasher.Write([]byte(objString))
 	expectedId := hex.EncodeToString(hasher.Sum(nil))
@@ -153,6 +155,30 @@ func TestHashObjectForTree(t *testing.T) {
 		file.Close()
 		os.Remove(file.Name())
 	})
+}
+
+func TestWriteObject(t *testing.T) {
+	type test struct {
+		inputPath    string
+		expectedType string
+		outputId     string
+	}
+
+	_ = []test{
+		{
+			inputPath:    "",
+			expectedType: BLOB,
+			outputId:     "",
+		},
+		{
+			inputPath:    "",
+			expectedType: TREE,
+			outputId:     "",
+		},
+	}
+
+	t.Skipf("Skipped: Test for write object")
+
 }
 
 func TestIndex(t *testing.T) {
