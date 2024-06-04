@@ -1,7 +1,6 @@
 package got
 
 import (
-	"bufio"
 	"bytes"
 	"compress/zlib"
 	"crypto/sha1"
@@ -11,9 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	cfg "github.com/ljpurcell/got/internal/config"
-	"github.com/ljpurcell/got/internal/utils"
 )
 
 const (
@@ -25,10 +21,39 @@ const (
 	STATUS_DELETE = "D"
 )
 
-var StagingIndex Index
+var (
+	config       *Config
+	stagingIndex Index
+)
+
+type Config struct {
+	Repo      string
+	RefsDir   string
+	HeadsDir  string
+	HeadFile  string
+	IndexFile string
+	ObjectDB  string
+}
+
+type GotObject interface {
+	HexId() string
+}
+
+type object struct {
+	Id   string
+	Type string
+}
+
+type Blob struct {
+	object
+}
+
+type Tree struct {
+	object
+}
 
 type Commit struct {
-	Id        string
+	object
 	Author    string
 	CreatedAt time.Time
 	Message   string
@@ -36,22 +61,37 @@ type Commit struct {
 	TreeId    string
 }
 
-type Index struct {
-	entries []indexEntry
+func (o object) HexId() string {
+	return o.Id
 }
 
-type indexEntry struct {
-	Id     string
-	Name   string
-	IsDir  bool
-	Status string
+func GetConfig() Config {
+	if config == nil {
+		return Config{
+			Repo:      ".got",
+			RefsDir:   ".got/refs",
+			HeadsDir:  ".got/refs/heads",
+			HeadFile:  ".got/refs/heads/HEAD",
+			IndexFile: ".got/index",
+			ObjectDB:  ".got/objects",
+		}
+	}
+	return *config
+}
+
+func newBlob(id string) *Blob {
+	return &Blob{object{Id: id, Type: BLOB}}
+}
+
+func newTree(id string) *Tree {
+	return &Tree{object{Id: id, Type: TREE}}
 }
 
 func GetObjectFile(id string) (*os.File, error) {
-	db := filepath.Join(cfg.GOT_REPO, "objects")
+	db := filepath.Join(config.ObjectDB)
 	objects, err := os.ReadDir(db)
 	if err != nil {
-		utils.ExitWithError("Could not read %q: %v", db, err)
+		return nil, err
 	}
 
 	for _, dir := range objects {
@@ -59,7 +99,7 @@ func GetObjectFile(id string) (*os.File, error) {
 			dPath := filepath.Join(db, dir.Name())
 			files, err := os.ReadDir(dPath)
 			if err != nil {
-				utils.ExitWithError("Could not read %q: %v", dir.Name(), err)
+				return nil, err
 			}
 
 			for _, file := range files {
@@ -74,36 +114,42 @@ func GetObjectFile(id string) (*os.File, error) {
 	return nil, fmt.Errorf("Could not find object file for %q\n", id)
 }
 
-func WriteObject(obj string) (id string, objectType string) {
-	if utils.IsDir(obj) {
-		id = writeTree(obj)
-		objectType = TREE
-		return
+func WriteObject(obj string) (GotObject, error) {
+	info, err := os.Stat(obj)
+	if err != nil {
+		return nil, err
 	}
 
-	id = writeBlob(obj)
-	objectType = BLOB
-	return
+	if info.IsDir() {
+		t, err := writeTree(obj)
+		if err != nil {
+			return nil, err
+		}
+
+		return *t, nil
+	}
+
+	b, err := writeBlob(obj)
+	if err != nil {
+		return nil, err
+	}
+
+	return *b, nil
 }
 
-func writeBlob(fileName string) string {
-	if !utils.Exists(fileName) {
-		utils.ExitWithError("Cannot hash %q. Object doesn't exist", fileName)
+func writeBlob(fileName string) (*Blob, error) {
+	id, blobString, err := formatHexId(fileName, BLOB)
+	if err != nil {
+		return nil, err
 	}
 
-	if utils.IsDir(fileName) {
-		utils.ExitWithError("Cannot call hash blob on %q. Object is a directory", fileName)
-	}
-
-	id, blobString := FormatHexId(fileName, BLOB)
-
-	objDir := filepath.Join(cfg.GOT_REPO, "objects", id[:2])
+	objDir := filepath.Join(config.ObjectDB, id[:2])
 	objFile := filepath.Join(objDir, id[2:])
 
 	os.MkdirAll(objDir, 0700)
 	file, err := os.Create(objFile)
 	if err != nil {
-		utils.ExitWithError("Could not write object %q using name %q in directory %q", fileName, objFile, objDir)
+		return nil, err
 	}
 
 	defer file.Close()
@@ -115,48 +161,54 @@ func writeBlob(fileName string) string {
 
 	err = os.WriteFile(objFile, b.Bytes(), 0700)
 	if err != nil {
-		utils.ExitWithError("Could not write compressed contents of %v to %v", fileName, objFile)
+		return nil, fmt.Errorf("Could not write compressed contents of %v to %v", fileName, objFile)
 	}
 
-	return id
+	return newBlob(id), nil
 }
 
-func writeTree(dir string) string {
-	if !utils.Exists(dir) {
-		utils.ExitWithError("Cannot hash %q. Object doesn't exist", dir)
-	}
-
-	if !utils.IsDir(dir) {
-		utils.ExitWithError("Cannot call hash tree on %q. Object is not a directory", dir)
-	}
-
-	var tree string
-	files, err := os.ReadDir(dir)
+func writeTree(path string) (*Tree, error) {
+	_, err := os.Stat(path)
 	if err != nil {
-		utils.ExitWithError("Could not read files for %v: %v", dir, err)
+		return nil, err
+	}
+
+	var content string
+	files, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
 	}
 
 	for _, file := range files {
-		filePath := filepath.Join(dir, file.Name())
+		filePath := filepath.Join(path, file.Name())
 		if file.IsDir() {
-			treeId := writeTree(filePath)
-			tree += fmt.Sprintf("%v tree %v %v\n", 100644, treeId, file.Name())
+			tree, err := writeTree(filePath)
+			if err != nil {
+				return nil, err
+			}
+			content += fmt.Sprintf("%v tree %v %v\n", 100644, tree.Id, file.Name())
 		} else {
-			blobId := writeBlob(filePath)
-			tree += fmt.Sprintf("%v blob %v %v\n", 100644, blobId, file.Name())
+			blob, err := writeBlob(filePath)
+			if err != nil {
+				return nil, err
+			}
+			content += fmt.Sprintf("%v blob %v %v\n", 100644, blob.Id, file.Name())
 		}
 
 	}
 
-	id, treeString := FormatHexId(tree, TREE)
+	id, treeString, err := formatHexId(content, TREE)
+	if err != nil {
+		return nil, err
+	}
 
-	objDir := filepath.Join(cfg.GOT_REPO, "objects", id[:2])
+	objDir := filepath.Join(config.ObjectDB, id[:2])
 	objFile := filepath.Join(objDir, id[2:])
 
 	os.MkdirAll(objDir, 0700)
 	file, err := os.Create(objFile)
 	if err != nil {
-		utils.ExitWithError("Could not write object %q (tree) using name %q in directory %q", dir, objFile, objDir)
+		return nil, err
 	}
 
 	defer file.Close()
@@ -168,13 +220,13 @@ func writeTree(dir string) string {
 
 	err = os.WriteFile(objFile, b.Bytes(), 0700)
 	if err != nil {
-		utils.ExitWithError("Could not write compressed contents of %v to %v", dir, objFile)
+		return nil, err
 	}
 
-	return id
+	return newTree(id), nil
 }
 
-func CreateCommit(tree string, parentId string, msg string) *Commit {
+func newCommit(tree string, parentId string, msg string) (*Commit, error) {
 	parentListing := ""
 	if parentId != "" {
 		parentListing = fmt.Sprintf("parent %v", parentId)
@@ -184,15 +236,18 @@ func CreateCommit(tree string, parentId string, msg string) *Commit {
 
 	data := fmt.Sprintf("tree %v\n%v\ncommiter %v\n\n%v", tree, parentListing, committer, msg)
 
-	id, commitString := FormatHexId(data, COMMIT)
+	id, commitString, err := formatHexId(data, COMMIT)
+	if err != nil {
+		return nil, err
+	}
 
-	objDir := filepath.Join(cfg.GOT_REPO, "objects", id[:2])
+	objDir := filepath.Join(config.ObjectDB, id[:2])
 	objFile := filepath.Join(objDir, id[2:])
 
 	os.MkdirAll(objDir, 0700)
 	file, err := os.Create(objFile)
 	if err != nil {
-		utils.ExitWithError("Could not write object (commit) using name %q in directory %q", objFile, objDir)
+		return nil, err
 	}
 
 	defer file.Close()
@@ -204,30 +259,32 @@ func CreateCommit(tree string, parentId string, msg string) *Commit {
 
 	err = os.WriteFile(objFile, b.Bytes(), 0700)
 	if err != nil {
-		utils.ExitWithError("Could not write compressed contents of commit with message %q to %v", msg, objFile)
+		return nil, err
 	}
 
 	return &Commit{
-		Id:        id,
+		object: object{
+			Id:   id,
+			Type: COMMIT,
+		},
 		Author:    "ljpurcell",
 		CreatedAt: time.Now(),
 		Message:   msg,
 		ParentId:  "",
 		TreeId:    tree,
-	}
+	}, nil
 }
 
-func FormatHexId(obj string, objType string) (id string, objString string) {
-
+func formatHexId(obj string, objType string) (id string, objString string, err error) {
 	size, content := len(obj), obj
 	if objType == BLOB {
 		fileContents, err := os.ReadFile(obj)
 		if err != nil {
-			utils.ExitWithError("Could not read file %v: %v", obj, err)
+			return "", "", err
 		}
 		info, err := os.Stat(obj)
 		if err != nil {
-			utils.ExitWithError("Could not get file size for hash of %q", obj)
+			return "", "", err
 		}
 		size = int(info.Size())
 		content = string(fileContents)
@@ -237,133 +294,6 @@ func FormatHexId(obj string, objType string) (id string, objString string) {
 	hasher := sha1.New()
 	hasher.Write([]byte(objString))
 	id = hex.EncodeToString(hasher.Sum(nil))
-	return
-}
 
-func (i *Index) Entries() []indexEntry {
-	return i.entries
-}
-
-func (i *Index) Clear() {
-	if err := os.Truncate(cfg.INDEX_FILE, 0); err != nil {
-		utils.ExitWithError("Could not clear index file: %v", err)
-	}
-}
-
-func GetIndex() Index {
-	index := Index{}
-
-	if !utils.Exists(cfg.INDEX_FILE) {
-		return index
-	}
-
-	indexFile, err := os.Open(cfg.INDEX_FILE)
-	if err != nil {
-		utils.ExitWithError("Could not open index file: %v", err)
-	}
-
-	scanner := bufio.NewScanner(indexFile)
-	for scanner.Scan() {
-		entryParts := strings.Split(scanner.Text(), " ")
-		entry := indexEntry{
-			Id:     entryParts[1],
-			Name:   entryParts[2],
-			Status: entryParts[0],
-		}
-
-		index.entries = append(index.entries, entry)
-	}
-
-	return index
-}
-
-func (i *Index) IncludesFile(file string) (bool, int) {
-	for idx, entry := range i.entries {
-		if entry.Name == file {
-			return true, idx
-		}
-	}
-
-	return false, -1
-}
-
-func (i *Index) UpdateOrAddEntry(path string) {
-
-	files := []string{path}
-
-	if utils.IsDir(path) {
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			utils.ExitWithError("Could not read dir entries: %v\n", err)
-		}
-
-		files = []string{}
-
-		for _, entry := range entries {
-			nestedPath := filepath.Join(path, entry.Name())
-			if entry.IsDir() {
-				i.UpdateOrAddEntry(nestedPath)
-			} else {
-				files = append(files, nestedPath)
-			}
-		}
-	}
-
-	for _, fName := range files {
-		if !utils.Exists(fName) {
-			utils.ExitWithError("No file named %q", fName)
-		}
-
-		blobId, _ := FormatHexId(fName, BLOB)
-
-		found, index := i.IncludesFile(path)
-		if found {
-			i.entries[index].Id = blobId
-			return
-		}
-
-		entry := indexEntry{
-			Id:     blobId,
-			Name:   path,
-			IsDir:  false,
-			Status: STATUS_ADD, // Need to implement logic to determine status
-		}
-
-		i.entries = append(i.entries, entry)
-	}
-}
-
-func (i *Index) RemoveFile(file string) bool {
-	if utils.Exists(file) {
-		err := os.Remove(file)
-		if err != nil {
-			utils.ExitWithError("Could not remove %q: ", file, err)
-		}
-	}
-
-	found, idx := i.IncludesFile(file)
-	if found {
-		// Currently removing file from index, later update status instead
-		i.entries = append(i.entries[:idx], i.entries[idx+1:]...)
-		return true
-	}
-
-	return false
-}
-
-func (i *Index) Save() {
-	if utils.Exists(cfg.INDEX_FILE) {
-		os.Truncate(cfg.INDEX_FILE, 0)
-	}
-
-	contents := ""
-	for _, entry := range *&i.entries {
-		contents += fmt.Sprintf("%v %v %v\n", entry.Status, entry.Id, entry.Name)
-	}
-
-	os.WriteFile(cfg.INDEX_FILE, []byte(contents), 0700)
-}
-
-func (i *Index) Length() int {
-	return len(i.entries)
+	return id, objString, nil
 }
