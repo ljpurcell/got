@@ -18,7 +18,7 @@ type Command struct {
 	Short string
 	Long  string
 	Help  string
-	Run   func(got.Config, []string) error
+	Run   func([]string) error
 }
 
 func main() {
@@ -49,9 +49,7 @@ func execute() error {
 		cmd = UnknownCommand(subCmd)
 	}
 
-	config := got.GetConfig()
-
-	if err := cmd.Run(config, os.Args[2:]); err != nil {
+	if err := cmd.Run(os.Args[2:]); err != nil {
 		return err
 	}
 
@@ -63,7 +61,7 @@ func UnknownCommand(cmd string) *Command {
 		Name:  "unknown",
 		Short: "Got did not recognise the subcommand",
 		Long:  "Got did not recognise the subcommand; try running \"got --help\" for more",
-		Run: func(_ got.Config, _ []string) error {
+		Run: func(_ []string) error {
 			return fmt.Errorf("Got did not recognise the subcommand %q", cmd)
 		},
 	}
@@ -74,7 +72,8 @@ func InitCommand() *Command {
 		Name:  "init",
 		Short: "Initialises a got repository",
 		Long:  "Initialises a got repository with a hidden .got file to hold data",
-		Run: func(config got.Config, args []string) error {
+		Run: func(args []string) error {
+			config := got.GetConfig()
 			_, err := os.Stat(config.Repo)
 			if err != nil {
 				return err
@@ -103,7 +102,7 @@ func AddCommand() *Command {
 		Name:  "add",
 		Short: "Add objects to the index",
 		Long:  "Add files or directories to the index (staging area)",
-		Run: func(config got.Config, args []string) error {
+		Run: func(args []string) error {
 			if len(args) < 1 {
 				return errors.New("not enough arguments")
 			}
@@ -128,7 +127,7 @@ func RemoveCommand() *Command {
 		Name:  "remove",
 		Short: "Remove objects from the working directory",
 		Long:  "Remove files or directories from the index (staging area)",
-		Run: func(config got.Config, args []string) error {
+		Run: func(args []string) error {
 			if len(args) < 1 {
 				return errors.New("not enough arguments")
 			}
@@ -153,7 +152,7 @@ func CommitCommand() *Command {
 		Name:  "commit",
 		Short: "Commit the current index",
 		Long:  "Create a commit (snapshot) of the current state of the objects listed in the index",
-		Run: func(config got.Config, args []string) error {
+		Run: func(args []string) error {
 			if len(args) != 1 {
 				errors.New("You can only pass exactly one argument [commit message] to this command")
 			}
@@ -182,7 +181,7 @@ func CheckoutCommand() *Command {
 		Name:  "checkout",
 		Short: "Checkout a specific commit",
 		Long:  "Checkout a specific commit, causing the working directory to revert to the state contained in the commit",
-		Run: func(config got.Config, args []string) error {
+		Run: func(args []string) error {
 			if len(args) != 1 {
 				return errors.New("You can only pass exactly one argument [commit hash] to this command")
 			}
