@@ -63,7 +63,9 @@ func (i *Index) UpdateOrAddEntry(path string) error {
 		for _, entry := range entries {
 			nestedPath := filepath.Join(path, entry.Name())
 			if entry.IsDir() {
-				i.UpdateOrAddEntry(nestedPath)
+				if err = i.UpdateOrAddEntry(nestedPath); err != nil {
+					return err
+				}
 			} else {
 				files = append(files, nestedPath)
 			}
@@ -117,20 +119,20 @@ func (i *Index) RemoveFile(file string) (removed bool, err error) {
 }
 
 func (i *Index) Save() error {
-	_, err := os.Stat(config.IndexFile)
-	if err != nil {
+	if _, err := os.Stat(config.IndexFile); err != nil {
 		return err
 	}
 
-	os.Truncate(config.IndexFile, 0)
+	if err := os.Truncate(config.IndexFile, 0); err != nil {
+		return err
+	}
 
 	contents := ""
-	for _, entry := range *&i.entries {
+	for _, entry := range i.entries {
 		contents += fmt.Sprintf("%v %v %v\n", entry.Status, entry.Id, entry.Name)
 	}
 
-	os.WriteFile(config.IndexFile, []byte(contents), 0700)
-	return nil
+	return os.WriteFile(config.IndexFile, []byte(contents), 0700)
 }
 
 func (i *Index) Length() int {
@@ -160,7 +162,10 @@ func (i *Index) Commit(msg string) error {
 	objDir := filepath.Join(config.ObjectDB, id[:2])
 	objFile := filepath.Join(objDir, id[2:])
 
-	os.MkdirAll(objDir, 0700)
+	if err = os.MkdirAll(objDir, 0700); err != nil {
+		return err
+	}
+
 	file, err := os.Create(objFile)
 	if err != nil {
 		return err
@@ -170,11 +175,14 @@ func (i *Index) Commit(msg string) error {
 
 	var b bytes.Buffer
 	compressor := zlib.NewWriter(&b)
-	compressor.Write([]byte(treeString))
+
+	if _, err = compressor.Write([]byte(treeString)); err != nil {
+		return err
+	}
+
 	compressor.Close()
 
-	err = os.WriteFile(objFile, b.Bytes(), 0700)
-	if err != nil {
+	if err = os.WriteFile(objFile, b.Bytes(), 0700); err != nil {
 		return err
 	}
 
@@ -189,8 +197,7 @@ func (i *Index) Commit(msg string) error {
 	pathToRef := append([]string{config.Repo}, pathBits...)
 	path := filepath.Join(pathToRef...)
 
-	_, err = os.Stat(path)
-	if err != nil {
+	if _, err = os.Stat(path); err != nil {
 		return err
 	}
 
@@ -209,7 +216,9 @@ func (i *Index) Commit(msg string) error {
 
 	// Post Commit:
 	// 1. Clear i
-	i.Clear()
+	if err = i.Clear(); err != nil {
+		return err
+	}
 
 	// 2. Update hash pointed at in HEAD
 	if err := os.Truncate(path, 0); err != nil {
@@ -229,6 +238,9 @@ func GetIndex() (Index, error) {
 	index := Index{}
 
 	_, err := os.Stat(config.IndexFile)
+	if err != nil {
+		return index, err
+	}
 
 	indexFile, err := os.Open(config.IndexFile)
 	if err != nil {

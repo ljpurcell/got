@@ -50,7 +50,7 @@ func execute() error {
 	}
 
 	if err := cmd.Run(os.Args[2:]); err != nil {
-		return err
+		return fmt.Errorf("%s command error: %w", subCmd, err)
 	}
 
 	return nil
@@ -62,7 +62,7 @@ func UnknownCommand(cmd string) *Command {
 		Short: "Got did not recognise the subcommand",
 		Long:  "Got did not recognise the subcommand; try running \"got --help\" for more",
 		Run: func(_ []string) error {
-			return fmt.Errorf("Got did not recognise the subcommand %q", cmd)
+			return fmt.Errorf("did not recognise subcommand %q", cmd)
 		},
 	}
 }
@@ -81,7 +81,9 @@ func InitCommand() *Command {
 
 			rw := fs.FileMode(0666)
 
-			os.MkdirAll(config.HeadsDir, rw)
+			if err = os.MkdirAll(config.HeadsDir, rw); err != nil {
+				return fmt.Errorf("could not create heads directory path: %w", err)
+			}
 
 			head, err := os.Create(config.HeadFile)
 			if err != nil {
@@ -89,7 +91,9 @@ func InitCommand() *Command {
 			}
 			defer head.Close()
 
-			os.WriteFile(config.HeadFile, []byte("ref: refs/heads/main"), rw)
+			if err = os.WriteFile(config.HeadFile, []byte("ref: refs/heads/main"), rw); err != nil {
+				return fmt.Errorf("could not write to HEAD file: %w", err)
+			}
 
 			fmt.Fprintf(os.Stdout, "Initialised an empty got repository\n")
 			return nil
@@ -113,11 +117,12 @@ func AddCommand() *Command {
 			}
 
 			for _, file := range args {
-				index.UpdateOrAddEntry(file)
+				if err = index.UpdateOrAddEntry(file); err != nil {
+					return err
+				}
 			}
 
-			index.Save()
-			return nil
+			return index.Save()
 		},
 	}
 }
@@ -138,11 +143,12 @@ func RemoveCommand() *Command {
 			}
 
 			for _, file := range args {
-				index.RemoveFile(file)
+				if _, err = index.RemoveFile(file); err != nil {
+					return fmt.Errorf("could not remove file %s: %w", file, err)
+				}
 			}
 
-			index.Save()
-			return nil
+			return index.Save()
 		},
 	}
 }
@@ -154,24 +160,19 @@ func CommitCommand() *Command {
 		Long:  "Create a commit (snapshot) of the current state of the objects listed in the index",
 		Run: func(args []string) error {
 			if len(args) != 1 {
-				errors.New("You can only pass exactly one argument [commit message] to this command")
+				return errors.New("you can only pass exactly one argument [commit message] to this command")
 			}
 
-			msg := args[0]
-
-			// 1. Generate an up to date tree hash for all listings in index
 			index, err := got.GetIndex()
 			if err != nil {
-				return err
+				return errors.New("could not get index file")
 			}
 
 			if index.Length() == 0 {
-				return errors.New("Index file empty. Nothing staged to commit")
+				return errors.New("index file empty")
 			}
 
-			index.Commit(msg)
-
-			return nil
+			return index.Commit(args[0])
 		},
 	}
 }
@@ -183,29 +184,30 @@ func CheckoutCommand() *Command {
 		Long:  "Checkout a specific commit, causing the working directory to revert to the state contained in the commit",
 		Run: func(args []string) error {
 			if len(args) != 1 {
-				return errors.New("You can only pass exactly one argument [commit hash] to this command")
+				return errors.New("you can only pass exactly one argument [commit hash] to this command")
 			}
 
 			id := args[0]
 
 			if len(id) < 6 {
-				return errors.New("You must provid at least 6 characters of the commit ID")
+				return errors.New("you must provid at least 6 characters of the commit ID")
 			}
 
-			// 1. Search for commit object
 			file, err := got.GetObjectFile(id)
 			if err != nil {
-				return fmt.Errorf("Error getting object file for checkout command: %w", err)
+				return fmt.Errorf("error getting object file: %w", err)
 			}
 
-			// 2. Decompress and restore working directory
 			decompressor, err := zlib.NewReader(file)
 			if err != nil {
-				return fmt.Errorf("Could not create decompressor %v: ", err)
+				return fmt.Errorf("could not create decompressor: %w ", err)
 			}
+
 			decompressor.Close()
 			var out bytes.Buffer
-			io.Copy(&out, decompressor)
+			if _, err = io.Copy(&out, decompressor); err != nil {
+				return err
+			}
 
 			lines := strings.Split(out.String(), "\n")
 			for _, line := range lines {

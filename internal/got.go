@@ -146,7 +146,10 @@ func writeBlob(fileName string) (*Blob, error) {
 	objDir := filepath.Join(config.ObjectDB, id[:2])
 	objFile := filepath.Join(objDir, id[2:])
 
-	os.MkdirAll(objDir, 0700)
+	if err = os.MkdirAll(objDir, 0700); err != nil {
+		return nil, err
+	}
+
 	file, err := os.Create(objFile)
 	if err != nil {
 		return nil, err
@@ -156,12 +159,16 @@ func writeBlob(fileName string) (*Blob, error) {
 
 	var b bytes.Buffer
 	compressor := zlib.NewWriter(&b)
-	compressor.Write([]byte(blobString))
+
+	if _, err = compressor.Write([]byte(blobString)); err != nil {
+		return nil, err
+	}
+
 	compressor.Close()
 
 	err = os.WriteFile(objFile, b.Bytes(), 0700)
 	if err != nil {
-		return nil, fmt.Errorf("Could not write compressed contents of %v to %v", fileName, objFile)
+		return nil, fmt.Errorf("could not write compressed contents of %v to %v", fileName, objFile)
 	}
 
 	return newBlob(id), nil
@@ -205,7 +212,10 @@ func writeTree(path string) (*Tree, error) {
 	objDir := filepath.Join(config.ObjectDB, id[:2])
 	objFile := filepath.Join(objDir, id[2:])
 
-	os.MkdirAll(objDir, 0700)
+	if err = os.MkdirAll(objDir, 0700); err != nil {
+		return nil, err
+	}
+
 	file, err := os.Create(objFile)
 	if err != nil {
 		return nil, err
@@ -215,7 +225,11 @@ func writeTree(path string) (*Tree, error) {
 
 	var b bytes.Buffer
 	compressor := zlib.NewWriter(&b)
-	compressor.Write([]byte(treeString))
+
+	if _, err = compressor.Write([]byte(treeString)); err != nil {
+		return nil, err
+	}
+
 	compressor.Close()
 
 	err = os.WriteFile(objFile, b.Bytes(), 0700)
@@ -244,7 +258,10 @@ func newCommit(tree string, parentId string, msg string) (*Commit, error) {
 	objDir := filepath.Join(config.ObjectDB, id[:2])
 	objFile := filepath.Join(objDir, id[2:])
 
-	os.MkdirAll(objDir, 0700)
+	if err = os.MkdirAll(objDir, 0700); err != nil {
+		return nil, err
+	}
+
 	file, err := os.Create(objFile)
 	if err != nil {
 		return nil, err
@@ -254,7 +271,11 @@ func newCommit(tree string, parentId string, msg string) (*Commit, error) {
 
 	var b bytes.Buffer
 	compressor := zlib.NewWriter(&b)
-	compressor.Write([]byte(commitString))
+
+	if _, err = compressor.Write([]byte(commitString)); err != nil {
+		return nil, err
+	}
+
 	compressor.Close()
 
 	err = os.WriteFile(objFile, b.Bytes(), 0700)
@@ -292,7 +313,11 @@ func formatHexId(obj string, objType string) (id string, objString string, err e
 
 	objString = fmt.Sprintf("%v %d\n%v", objType, size, content)
 	hasher := sha1.New()
-	hasher.Write([]byte(objString))
+
+	if _, err = hasher.Write([]byte(objString)); err != nil {
+		return "", "", err
+	}
+
 	id = hex.EncodeToString(hasher.Sum(nil))
 
 	return id, objString, nil
