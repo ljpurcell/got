@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"compress/zlib"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 
 type Index struct {
 	entries []indexEntry
+	storage io.ReadWriter // TODO: Abstract away config.IndexFile for ease of testing
 }
 
 type indexEntry struct {
@@ -113,7 +116,7 @@ func (i *Index) RemoveFile(file string) (removed bool, err error) {
 		return false, nil
 	}
 
-	// Currently removing file from index, later update status instead
+	// TODO: currently removing file from index, later update status instead
 	i.entries = append(i.entries[:idx], i.entries[idx+1:]...)
 	return true, nil
 }
@@ -233,21 +236,25 @@ func (i *Index) Commit(msg string) error {
 	return nil
 }
 
+func InitIndex(storage io.ReadWriter) (initialised bool) {
+	if stagingIndex.storage != nil {
+		return false
+	}
+
+	stagingIndex = Index{
+		storage: storage,
+	}
+
+	return true
+}
+
 // TODO: Could do with work
 func GetIndex() (Index, error) {
-	index := Index{}
-
-	_, err := os.Stat(config.IndexFile)
-	if err != nil {
-		return index, err
+	if stagingIndex.storage == nil {
+		return Index{}, errors.New("you must initialise the index (got.InitIndex) before using it")
 	}
 
-	indexFile, err := os.Open(config.IndexFile)
-	if err != nil {
-		return index, err
-	}
-
-	scanner := bufio.NewScanner(indexFile)
+	scanner := bufio.NewScanner(stagingIndex.storage)
 	for scanner.Scan() {
 		entryParts := strings.Split(scanner.Text(), " ")
 		entry := indexEntry{
@@ -256,8 +263,8 @@ func GetIndex() (Index, error) {
 			Status: entryParts[0],
 		}
 
-		index.entries = append(index.entries, entry)
+		stagingIndex.entries = append(stagingIndex.entries, entry)
 	}
 
-	return index, nil
+	return stagingIndex, nil
 }
