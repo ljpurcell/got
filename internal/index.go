@@ -14,9 +14,14 @@ import (
 	"strings"
 )
 
+type storer interface {
+	io.ReadWriter
+	Truncate(int) error
+}
+
 type Index struct {
 	entries []indexEntry
-	storage io.ReadWriter // TODO: Abstract away config.IndexFile for ease of testing
+	storage storer
 }
 
 type indexEntry struct {
@@ -31,9 +36,11 @@ func (i *Index) Entries() []indexEntry {
 }
 
 func (i *Index) Clear() error {
-	if err := os.Truncate(config.IndexFile, 0); err != nil {
+	if err := i.storage.Truncate(0); err != nil {
 		return err
 	}
+
+	i.entries = []indexEntry{}
 	return nil
 }
 
@@ -47,6 +54,7 @@ func (i *Index) IncludesFile(file string) (bool, int) {
 	return false, -1
 }
 
+// TODO: Consider whether a path is the correct parameter to pass in
 func (i *Index) UpdateOrAddEntry(path string) error {
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -236,7 +244,7 @@ func (i *Index) Commit(msg string) error {
 	return nil
 }
 
-func InitIndex(storage io.ReadWriter) (initialised bool) {
+func InitIndex(storage storer) (initialised bool) {
 	if stagingIndex.storage != nil {
 		return false
 	}
