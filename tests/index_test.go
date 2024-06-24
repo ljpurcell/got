@@ -1,41 +1,11 @@
 package tests
 
 import (
-	"bytes"
-	"errors"
-	"fmt"
 	"os"
-	"path/filepath"
 	"testing"
 
 	got "github.com/ljpurcell/got/internal"
 )
-
-type bufferReadWriteTruncate bytes.Buffer
-
-func (b bufferReadWriteTruncate) Read(p []byte) (int, error) {
-	buff := bytes.Buffer(b)
-	return buff.Read(p)
-}
-
-func (b bufferReadWriteTruncate) Write(p []byte) (int, error) {
-	buff := bytes.Buffer(b)
-	return buff.Write(p)
-}
-
-func (b bufferReadWriteTruncate) Truncate(n int) error {
-	if n < 0 {
-		return errors.New("cannot truncate buffer to less than 0")
-	}
-
-	buff := bytes.Buffer(b)
-	if buff.Len() < n {
-		return fmt.Errorf("cannot truncate buffer of size %d to %d", buff.Len(), n)
-	}
-
-	buff.Truncate(0)
-	return nil
-}
 
 func TestGetIndex(t *testing.T) {
 	_, err := got.GetIndex()
@@ -52,7 +22,37 @@ func TestGetIndex(t *testing.T) {
 	}
 }
 
-func TestUpdateIndex(t *testing.T) {
+func TestIndexIncludes(t *testing.T) {
+	var b bufferReadWriteTruncate
+	got.InitIndex(b)
+
+	index, err := got.GetIndex()
+	if err != nil {
+		t.Fatalf("could not get index: %s", err)
+	}
+
+	testdata, err := getTestDataDirectory(t)
+
+	file, err := os.CreateTemp(testdata, "test_index_includes_")
+	if err != nil {
+		t.Fatalf("could not create temp file: %s", err)
+	}
+	defer os.Remove(file.Name())
+
+	if _, err = file.Write([]byte("Hello")); err != nil {
+		t.Fatalf("could not write to temp file: %s", err)
+	}
+
+	if err = index.UpdateOrAddEntry(file.Name()); err != nil {
+		t.Fatalf("could not add to index: %s", err)
+	}
+
+	if ok, _ := index.IncludesFile(file.Name()); !ok {
+		t.Fatalf("index entries should include %s but does not", file.Name())
+	}
+}
+
+func TestAddToIndex(t *testing.T) {
 	var b bufferReadWriteTruncate
 	got.InitIndex(b)
 
@@ -63,6 +63,46 @@ func TestUpdateIndex(t *testing.T) {
 
 	if len(index.Entries()) != 0 {
 		t.Fatalf("index entries should be empty but contains: %v", index.Entries())
+	}
+
+	testdata, err := getTestDataDirectory(t)
+
+	file, err := os.CreateTemp(testdata, "test_add_to_index_")
+	if err != nil {
+		t.Fatalf("could not create temp file: %s", err)
+	}
+	defer os.Remove(file.Name())
+
+	if _, err = file.Write([]byte("Hello")); err != nil {
+		t.Fatalf("could not write to temp file: %s", err)
+	}
+
+	if err = index.UpdateOrAddEntry(file.Name()); err != nil {
+		t.Fatalf("could not add to index: %s", err)
+	}
+
+	if len(index.Entries()) != 1 {
+		t.Fatalf("index entries should have one item but contains: %v", index.Entries())
+	}
+
+	entry := index.Entries()[0]
+
+	if entry.Status != got.STATUS_ADD {
+		t.Fatalf("%s should show status %s, instead showing %s", file.Name(), got.STATUS_MODIFY, entry.Status)
+	}
+
+	if ok, _ := index.IncludesFile(file.Name()); !ok {
+		t.Fatalf("index entries should include %s but does not", entry.Name)
+	}
+}
+
+func TestUpdateIndex(t *testing.T) {
+	var b bufferReadWriteTruncate
+	got.InitIndex(b)
+
+	index, err := got.GetIndex()
+	if err != nil {
+		t.Fatalf("could not get index: %s", err)
 	}
 
 	testdata, err := getTestDataDirectory(t)
@@ -81,8 +121,14 @@ func TestUpdateIndex(t *testing.T) {
 		t.Fatalf("could not update index: %s", err)
 	}
 
-	if len(index.Entries()) != 1 {
-		t.Fatalf("index entries should have one item but contains: %v", index.Entries())
+	if _, err = file.Write([]byte("Goodbye")); err != nil {
+		t.Fatalf("could not write to temp file: %s", err)
+	}
+
+	entry := index.Entries()[0]
+
+	if entry.Status != got.STATUS_MODIFY {
+		t.Fatalf("%s should show status %s, instead showing %s", entry.Name, got.STATUS_MODIFY, entry.Status)
 	}
 
 	if ok, _ := index.IncludesFile(file.Name()); !ok {
@@ -131,22 +177,5 @@ func TestClearIndex(t *testing.T) {
 // }
 //
 //
-// func TestAddToIndex(t *testing.T) {
-// }
-//
-// func TestIndexIncludes(t *testing.T) {
-// }
-//
 // func TestRemoveFromIndex(t *testing.T) {
 // }
-
-func getTestDataDirectory(t *testing.T) (path string, err error) {
-	t.Helper()
-	dir, err := os.Getwd()
-	if err != nil {
-		return "", fmt.Errorf("could not get working directory: %v", err)
-	}
-
-	projectDir := filepath.Dir(dir)
-	return filepath.Join(projectDir, "testdata"), nil
-}
