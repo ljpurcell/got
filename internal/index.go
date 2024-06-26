@@ -2,16 +2,21 @@ package got
 
 import (
 	"bufio"
-	"bytes"
-	"compress/zlib"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
+)
+
+type status = string
+
+const (
+	STATUS_ADD    = "A"
+	STATUS_MODIFY = "M"
+	STATUS_DELETE = "D"
 )
 
 type storer interface {
@@ -26,9 +31,9 @@ type Index struct {
 
 type indexEntry struct {
 	Id     string
-	Name   string
+	Name   filePath
 	IsDir  bool
-	Status string
+	Status status
 }
 
 func (i *Index) Entries() []indexEntry {
@@ -54,7 +59,6 @@ func (i *Index) IncludesFile(file string) (bool, int) {
 	return false, -1
 }
 
-// TODO: Consider whether a path is the correct parameter to pass in
 func (i *Index) UpdateOrAddEntry(path string) error {
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -84,8 +88,7 @@ func (i *Index) UpdateOrAddEntry(path string) error {
 	}
 
 	for _, fName := range files {
-		_, err := os.Stat(fName)
-		if err != nil {
+		if _, err := os.Stat(fName); err != nil {
 			return err
 		}
 
@@ -151,94 +154,34 @@ func (i *Index) Length() int {
 }
 
 func (i *Index) Commit(msg string) error {
-	entryNames := make([]string, i.Length())
+	cb := newCommitBuilder()
+	cb.message(msg)
 
-	for i, entry := range i.Entries() {
-		entryNames[i] = entry.Name
+	if err := cb.entries(i.Entries()); err != nil {
+		return fmt.Errorf("commit builder entries method: %w", err)
 	}
 
-	slices.Sort(entryNames)
-
-	var tree string
-	for _, name := range entryNames {
-		id, objectType := WriteObject(name)
-		tree += fmt.Sprintf("%v %v %v %v\n", 100644, objectType, id, name)
+	if err := cb.setParent(); err != nil {
+		return fmt.Errorf("commit builder set parent method: %w", err)
 	}
 
-	id, treeString, err := formatHexId(tree, TREE)
+	commit, err := cb.build()
 	if err != nil {
-		return err
+		return fmt.Errorf("commit builder build method: %w", err)
 	}
 
-	objDir := filepath.Join(config.ObjectDB, id[:2])
-	objFile := filepath.Join(objDir, id[2:])
-
-	if err = os.MkdirAll(objDir, 0700); err != nil {
-		return err
-	}
-
-	file, err := os.Create(objFile)
-	if err != nil {
-		return err
-	}
-
-	defer file.Close()
-
-	var b bytes.Buffer
-	compressor := zlib.NewWriter(&b)
-
-	if _, err = compressor.Write([]byte(treeString)); err != nil {
-		return err
-	}
-
-	compressor.Close()
-
-	if err = os.WriteFile(objFile, b.Bytes(), 0700); err != nil {
-		return err
-	}
-
-	// 2. get parent commit, if Exists
-	headRef, err := os.ReadFile(config.HeadFile)
-	if err != nil {
-		return err
-	}
-
-	ref := strings.Split(string(headRef), ":")
-	pathBits := strings.Split(strings.TrimSpace(ref[1]), "/")
-	pathToRef := append([]string{config.Repo}, pathBits...)
-	path := filepath.Join(pathToRef...)
-
-	if _, err = os.Stat(path); err != nil {
-		return err
-	}
-
-	contents, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-
-	parentId := string(contents)
-
-	// 3. Create commit
-	commit, err := newCommit(id, parentId, msg)
-	if err != nil {
-		return err
-	}
-
-	// Post Commit:
-	// 1. Clear i
 	if err = i.Clear(); err != nil {
 		return err
 	}
 
-	// 2. Update hash pointed at in HEAD
-	if err := os.Truncate(path, 0); err != nil {
+	// 2. Update hash pointed at by main in ref file
+	if err := os.Truncate(config.RefsHeadMainFile, 0); err != nil {
 		return err
 	}
 
 	rw := fs.FileMode(0666)
-	if err := os.WriteFile(path, []byte(commit.Id), rw); err != nil {
-		return fmt.Errorf("Could not write commit id %v to %v file: %v", commit.Id, path, err)
+	if err := os.WriteFile(config.RefsHeadMainFile, []byte(commit.Id), rw); err != nil {
+		return fmt.Errorf("Could not write commit id %v to %v file: %v", commit.Id, config.RefsHeadMainFile, err)
 	}
 
 	return nil

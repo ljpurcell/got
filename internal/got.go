@@ -8,17 +8,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
 
+type (
+	filePath   = string
+	id         = string
+	objectPath = string
+	objectType = string
+)
+
 const (
-	BLOB          = "blob"
-	TREE          = "tree"
-	COMMIT        = "commit"
-	STATUS_ADD    = "A"
-	STATUS_MODIFY = "M"
-	STATUS_DELETE = "D"
+	BLOB   objectType = "blob"
+	TREE   objectType = "tree"
+	COMMIT objectType = "commit"
 )
 
 var (
@@ -27,21 +32,21 @@ var (
 )
 
 type Config struct {
-	Repo      string
-	RefsDir   string
-	HeadsDir  string
-	HeadFile  string
-	IndexFile string
-	ObjectDB  string
+	Repo             filePath
+	RefsDir          filePath
+	RefsHeadMainFile filePath
+	HeadFile         filePath
+	IndexFile        filePath
+	ObjectDB         filePath
 }
 
 type GotObject interface {
-	HexId() string
+	HexId() id
 }
 
 type object struct {
-	Id   string
-	Type string
+	Id   id
+	Type objectType
 }
 
 type Blob struct {
@@ -57,37 +62,179 @@ type Commit struct {
 	Author    string
 	CreatedAt time.Time
 	Message   string
-	ParentId  string
-	TreeId    string
+	Parent    id
+	Tree      id
+	Entries   map[filePath]id
 }
 
 func (o object) HexId() string {
 	return o.Id
 }
 
+type commitBuilder struct {
+	commit *Commit
+}
+
+func (cb *commitBuilder) entries(entries []indexEntry) error {
+	cb.commit.Entries = make(map[filePath]id, len(entries))
+
+	entryNamesForTree := make([]string, 0, len(entries))
+
+	for i, entry := range entries {
+		cb.commit.Entries[entry.Name] = entry.Id
+		entryNamesForTree[i] = entry.Name
+	}
+
+	slices.Sort(entryNamesForTree)
+
+	var tree string
+
+	for _, name := range entryNamesForTree {
+		id, objectType := WriteObject(name)
+		tree += fmt.Sprintf("%v %v %v %v\n", 100644, objectType, id, name)
+	}
+
+	treeId, treeString, err := formatHexId(tree, TREE)
+	if err != nil {
+		return err
+	}
+
+	cb.commit.Tree = treeId
+
+	objDir := filepath.Join(config.ObjectDB, treeId[:2])
+	objFile := filepath.Join(objDir, treeId[2:])
+
+	if err = os.MkdirAll(objDir, 0700); err != nil {
+		return err
+	}
+
+	file, err := os.Create(objFile)
+	if err != nil {
+		return err
+	}
+
+	defer file.Close()
+
+	var b bytes.Buffer
+	compressor := zlib.NewWriter(&b)
+
+	if _, err = compressor.Write([]byte(treeString)); err != nil {
+		return err
+	}
+
+	compressor.Close()
+
+	if err = os.WriteFile(objFile, b.Bytes(), 0700); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (cb *commitBuilder) message(msg string) {
+	cb.commit.Message = msg
+}
+
+func (cb *commitBuilder) setParent() error {
+	headRef, err := os.ReadFile(config.HeadFile)
+	if err != nil {
+		return err
+	}
+
+	ref := strings.Split(string(headRef), ":")
+	pathBits := strings.Split(strings.TrimSpace(ref[1]), "/")
+	pathToRef := append([]string{config.Repo}, pathBits...)
+	path := filepath.Join(pathToRef...)
+
+	if _, err = os.Stat(path); err != nil {
+		return err
+	}
+
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	cb.commit.Parent = string(contents)
+	return nil
+}
+
+func (cb *commitBuilder) build() (*Commit, error) {
+	// TODO: Start here
+	var parentListing string
+
+	if cb.commit.Parent != "" {
+		parentListing = fmt.Sprintf("parent %v", cb.commit.Parent)
+	}
+
+	committer := "ljpurcell" // TODO: work on Got config
+
+	data := fmt.Sprintf("tree %v\n%v\ncommiter %v\n\n%v", cb.commit.Tree, parentListing, committer, cb.commit.Message)
+
+	id, commitString, err := formatHexId(data, COMMIT)
+	if err != nil {
+		return nil, err
+	}
+
+	objDir := filepath.Join(config.ObjectDB, id[:2])
+	objFile := filepath.Join(objDir, id[2:])
+
+	if err = os.MkdirAll(objDir, 0700); err != nil {
+		return nil, err
+	}
+
+	file, err := os.Create(objFile)
+	if err != nil {
+		return nil, err
+	}
+
+	defer file.Close()
+
+	var b bytes.Buffer
+	compressor := zlib.NewWriter(&b)
+
+	if _, err = compressor.Write([]byte(commitString)); err != nil {
+		return nil, err
+	}
+
+	compressor.Close()
+
+	if err = os.WriteFile(objFile, b.Bytes(), 0700); err != nil {
+		return nil, err
+	}
+
+	return cb.commit, nil
+}
+
+func newCommitBuilder() *commitBuilder {
+	return &commitBuilder{
+		commit: &Commit{},
+	}
+}
+
 func GetConfig() Config {
 	if config == nil {
 		return Config{
-			Repo:      ".got",
-			RefsDir:   ".got/refs",
-			HeadsDir:  ".got/refs/heads",
-			HeadFile:  ".got/refs/heads/HEAD",
-			IndexFile: ".got/index",
-			ObjectDB:  ".got/objects",
+			Repo:             ".got",
+			RefsDir:          ".got/refs",
+			RefsHeadMainFile: ".got/refs/main",
+			HeadFile:         ".got/refs/heads/HEAD",
+			IndexFile:        ".got/index",
+			ObjectDB:         ".got/objects",
 		}
 	}
 	return *config
 }
 
-func newBlob(id string) *Blob {
+func newBlob(id id) *Blob {
 	return &Blob{object{Id: id, Type: BLOB}}
 }
 
-func newTree(id string) *Tree {
+func newTree(id id) *Tree {
 	return &Tree{object{Id: id, Type: TREE}}
 }
 
-func GetObjectFile(id string) (*os.File, error) {
+func GetObjectFile(id id) (*os.File, error) {
 	db := filepath.Join(config.ObjectDB)
 	objects, err := os.ReadDir(db)
 	if err != nil {
@@ -111,17 +258,17 @@ func GetObjectFile(id string) (*os.File, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("Could not find object file for %q\n", id)
+	return nil, fmt.Errorf("could not find object file for %q\n", id)
 }
 
-func WriteObject(obj string) (GotObject, error) {
-	info, err := os.Stat(obj)
+func WriteObject(op objectPath) (GotObject, error) {
+	info, err := os.Stat(op)
 	if err != nil {
 		return nil, err
 	}
 
 	if info.IsDir() {
-		t, err := writeTree(obj)
+		t, err := writeTree(op)
 		if err != nil {
 			return nil, err
 		}
@@ -129,7 +276,7 @@ func WriteObject(obj string) (GotObject, error) {
 		return *t, nil
 	}
 
-	b, err := writeBlob(obj)
+	b, err := writeBlob(op)
 	if err != nil {
 		return nil, err
 	}
@@ -137,8 +284,8 @@ func WriteObject(obj string) (GotObject, error) {
 	return *b, nil
 }
 
-func writeBlob(fileName string) (*Blob, error) {
-	id, blobString, err := formatHexId(fileName, BLOB)
+func writeBlob(op objectPath) (*Blob, error) {
+	id, blobString, err := formatHexId(op, BLOB)
 	if err != nil {
 		return nil, err
 	}
@@ -168,26 +315,26 @@ func writeBlob(fileName string) (*Blob, error) {
 
 	err = os.WriteFile(objFile, b.Bytes(), 0700)
 	if err != nil {
-		return nil, fmt.Errorf("could not write compressed contents of %v to %v", fileName, objFile)
+		return nil, fmt.Errorf("could not write compressed contents of %v to %v", op, objFile)
 	}
 
 	return newBlob(id), nil
 }
 
-func writeTree(path string) (*Tree, error) {
-	_, err := os.Stat(path)
+func writeTree(op objectPath) (*Tree, error) {
+	_, err := os.Stat(op)
 	if err != nil {
 		return nil, err
 	}
 
 	var content string
-	files, err := os.ReadDir(path)
+	files, err := os.ReadDir(op)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, file := range files {
-		filePath := filepath.Join(path, file.Name())
+		filePath := filepath.Join(op, file.Name())
 		if file.IsDir() {
 			tree, err := writeTree(filePath)
 			if err != nil {
@@ -240,65 +387,9 @@ func writeTree(path string) (*Tree, error) {
 	return newTree(id), nil
 }
 
-func newCommit(tree string, parentId string, msg string) (*Commit, error) {
-	parentListing := ""
-	if parentId != "" {
-		parentListing = fmt.Sprintf("parent %v", parentId)
-	}
-
-	committer := "ljpurcell" // TODO work on Got config
-
-	data := fmt.Sprintf("tree %v\n%v\ncommiter %v\n\n%v", tree, parentListing, committer, msg)
-
-	id, commitString, err := formatHexId(data, COMMIT)
-	if err != nil {
-		return nil, err
-	}
-
-	objDir := filepath.Join(config.ObjectDB, id[:2])
-	objFile := filepath.Join(objDir, id[2:])
-
-	if err = os.MkdirAll(objDir, 0700); err != nil {
-		return nil, err
-	}
-
-	file, err := os.Create(objFile)
-	if err != nil {
-		return nil, err
-	}
-
-	defer file.Close()
-
-	var b bytes.Buffer
-	compressor := zlib.NewWriter(&b)
-
-	if _, err = compressor.Write([]byte(commitString)); err != nil {
-		return nil, err
-	}
-
-	compressor.Close()
-
-	err = os.WriteFile(objFile, b.Bytes(), 0700)
-	if err != nil {
-		return nil, err
-	}
-
-	return &Commit{
-		object: object{
-			Id:   id,
-			Type: COMMIT,
-		},
-		Author:    "ljpurcell",
-		CreatedAt: time.Now(),
-		Message:   msg,
-		ParentId:  "",
-		TreeId:    tree,
-	}, nil
-}
-
-func formatHexId(obj string, objType string) (id string, objString string, err error) {
+func formatHexId(obj string, t objectType) (id, objString string, err error) {
 	size, content := len(obj), obj
-	if objType == BLOB {
+	if t == BLOB {
 		fileContents, err := os.ReadFile(obj)
 		if err != nil {
 			return "", "", err
@@ -311,7 +402,7 @@ func formatHexId(obj string, objType string) (id string, objString string, err e
 		content = string(fileContents)
 	}
 
-	objString = fmt.Sprintf("%v %d\n%v", objType, size, content)
+	objString = fmt.Sprintf("%v %d\n%v", t, size, content)
 	hasher := sha1.New()
 
 	if _, err = hasher.Write([]byte(objString)); err != nil {

@@ -73,6 +73,8 @@ func InitCommand() *Command {
 		Short: "Initialises a got repository",
 		Long:  "Initialises a got repository with a hidden .got file to hold data",
 		Run: func(args []string) error {
+			// TODO: Should all be in a got function, and call index.init as well
+
 			config := got.GetConfig()
 			_, err := os.Stat(config.Repo)
 			if err != nil {
@@ -81,8 +83,8 @@ func InitCommand() *Command {
 
 			rw := fs.FileMode(0666)
 
-			if err = os.MkdirAll(config.HeadsDir, rw); err != nil {
-				return fmt.Errorf("could not create heads directory path: %w", err)
+			if err = os.MkdirAll(config.RefsDir, rw); err != nil {
+				return fmt.Errorf("could not create refs directory path: %w", err)
 			}
 
 			head, err := os.Create(config.HeadFile)
