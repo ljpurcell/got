@@ -21,13 +21,13 @@ func (b bufferReadWriteTruncate) Write(p []byte) (int, error) {
 	return buff.Write(p)
 }
 
-func (b bufferReadWriteTruncate) Truncate(n int) error {
+func (b bufferReadWriteTruncate) Truncate(n int64) error {
 	if n < 0 {
 		return errors.New("cannot truncate buffer to less than 0")
 	}
 
 	buff := bytes.Buffer(b)
-	if buff.Len() < n {
+	if buff.Len() < int(n) {
 		return fmt.Errorf("cannot truncate buffer of size %d to %d", buff.Len(), n)
 	}
 

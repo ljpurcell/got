@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -232,6 +233,39 @@ func newBlob(id id) *Blob {
 
 func newTree(id id) *Tree {
 	return &Tree{object{Id: id, Type: TREE}}
+}
+
+func Init() error {
+	config := GetConfig()
+	if _, err := os.Stat(config.Repo); err == nil {
+		return fmt.Errorf("%s already exists", config.Repo)
+	}
+
+	rw := fs.FileMode(0666)
+
+	if err := os.MkdirAll(config.RefsDir, rw); err != nil {
+		return fmt.Errorf("could not create refs directory path: %w", err)
+	}
+
+	head, err := os.Create(config.HeadFile)
+	if err != nil {
+		return fmt.Errorf("could not create HEAD file: %w", err)
+	}
+	defer head.Close()
+
+	if err = os.WriteFile(config.HeadFile, []byte("ref: refs/heads/main"), rw); err != nil {
+		return fmt.Errorf("could not write to HEAD file: %w", err)
+	}
+
+	index, err := os.Create(config.IndexFile)
+	if err != nil {
+		return fmt.Errorf("could not create index file: %w", err)
+	}
+	defer index.Close()
+
+	InitIndex(index)
+
+	return nil
 }
 
 func GetObjectFile(id id) (*os.File, error) {

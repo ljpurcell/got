@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"strings"
 
@@ -73,28 +72,8 @@ func InitCommand() *Command {
 		Short: "Initialises a got repository",
 		Long:  "Initialises a got repository with a hidden .got file to hold data",
 		Run: func(args []string) error {
-			// TODO: Should all be in a got function, and call index.init as well
-
-			config := got.GetConfig()
-			_, err := os.Stat(config.Repo)
-			if err != nil {
-				return err
-			}
-
-			rw := fs.FileMode(0666)
-
-			if err = os.MkdirAll(config.RefsDir, rw); err != nil {
-				return fmt.Errorf("could not create refs directory path: %w", err)
-			}
-
-			head, err := os.Create(config.HeadFile)
-			if err != nil {
-				return fmt.Errorf("could not create HEAD file: %w", err)
-			}
-			defer head.Close()
-
-			if err = os.WriteFile(config.HeadFile, []byte("ref: refs/heads/main"), rw); err != nil {
-				return fmt.Errorf("could not write to HEAD file: %w", err)
+			if err := got.Init(); err != nil {
+				return fmt.Errorf("could not initialise got repo: %w", err)
 			}
 
 			fmt.Fprintf(os.Stdout, "Initialised an empty got repository\n")

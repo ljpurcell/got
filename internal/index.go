@@ -21,7 +21,7 @@ const (
 
 type storer interface {
 	io.ReadWriter
-	Truncate(int) error
+	Truncate(int64) error
 }
 
 type Index struct {
