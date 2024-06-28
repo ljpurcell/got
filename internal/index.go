@@ -2,7 +2,6 @@ package got
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -78,6 +77,7 @@ func (i *Index) UpdateOrAddEntry(path string) error {
 		for _, entry := range entries {
 			nestedPath := filepath.Join(path, entry.Name())
 			if entry.IsDir() {
+
 				if err = i.UpdateOrAddEntry(nestedPath); err != nil {
 					return err
 				}
@@ -97,17 +97,30 @@ func (i *Index) UpdateOrAddEntry(path string) error {
 			return err
 		}
 
-		found, index := i.IncludesFile(path)
+		found, entryIndex := i.IncludesFile(path)
 		if found {
-			i.entries[index].Id = blobId
+			i.entries[entryIndex].Id = blobId
 			return nil
+		}
+
+		parent, err := getHeadCommit()
+		if err != nil && err != noHeadCommit {
+			return fmt.Errorf("could not get head commit: %s", err)
+		}
+
+		status := STATUS_ADD
+
+		if parent != nil {
+			if _, ok := parent.Entries[fName]; ok {
+				status = STATUS_MODIFY
+			}
 		}
 
 		entry := indexEntry{
 			Id:     blobId,
 			Name:   path,
 			IsDir:  false,
-			Status: STATUS_ADD, // Need to implement logic to determine status
+			Status: status,
 		}
 
 		i.entries = append(i.entries, entry)
@@ -133,6 +146,8 @@ func (i *Index) RemoveFile(file string) (removed bool, err error) {
 }
 
 func (i *Index) Save() error {
+
+	config := getConfig()
 	if _, err := os.Stat(config.IndexFile); err != nil {
 		return err
 	}
@@ -175,37 +190,38 @@ func (i *Index) Commit(msg string) error {
 	}
 
 	// 2. Update hash pointed at by main in ref file
-	if err := os.Truncate(config.RefsHeadMainFile, 0); err != nil {
+	config := getConfig()
+	if err := os.Truncate(config.RefsHeadsMainFile, 0); err != nil {
 		return err
 	}
 
 	rw := fs.FileMode(0666)
-	if err := os.WriteFile(config.RefsHeadMainFile, []byte(commit.Id), rw); err != nil {
-		return fmt.Errorf("Could not write commit id %v to %v file: %v", commit.Id, config.RefsHeadMainFile, err)
+	if err := os.WriteFile(config.RefsHeadsMainFile, []byte(commit.Id), rw); err != nil {
+		return fmt.Errorf("Could not write commit id %v to %v file: %v", commit.Id, config.RefsHeadsMainFile, err)
 	}
 
 	return nil
 }
 
-func InitIndex(storage storer) (initialised bool) {
-	if stagingIndex.storage != nil {
-		return false
-	}
-
-	stagingIndex = Index{
+func InitIndex(storage storer) Index {
+	return Index{
 		storage: storage,
 	}
 
-	return true
 }
 
 // TODO: Could do with work
 func GetIndex() (Index, error) {
-	if stagingIndex.storage == nil {
-		return Index{}, errors.New("you must initialise the index (got.InitIndex) before using it")
+	config := getConfig()
+	indexFile, err := os.Open(config.IndexFile)
+	if err != nil {
+		return Index{}, fmt.Errorf("could not open index file: %w", err)
 	}
+	defer indexFile.Close()
 
-	scanner := bufio.NewScanner(stagingIndex.storage)
+	index := InitIndex(indexFile)
+
+	scanner := bufio.NewScanner(index.storage)
 	for scanner.Scan() {
 		entryParts := strings.Split(scanner.Text(), " ")
 		entry := indexEntry{
@@ -214,8 +230,8 @@ func GetIndex() (Index, error) {
 			Status: entryParts[0],
 		}
 
-		stagingIndex.entries = append(stagingIndex.entries, entry)
+		index.entries = append(index.entries, entry)
 	}
 
-	return stagingIndex, nil
+	return index, nil
 }

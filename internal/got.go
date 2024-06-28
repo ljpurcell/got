@@ -1,10 +1,12 @@
 package got
 
 import (
+	"bufio"
 	"bytes"
 	"compress/zlib"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -13,6 +15,8 @@ import (
 	"strings"
 	"time"
 )
+
+var noHeadCommit = errors.New("no head commit")
 
 type (
 	filePath   = string
@@ -27,18 +31,14 @@ const (
 	COMMIT objectType = "commit"
 )
 
-var (
-	config       *Config
-	stagingIndex Index
-)
-
 type Config struct {
-	Repo             filePath
-	RefsDir          filePath
-	RefsHeadMainFile filePath
-	HeadFile         filePath
-	IndexFile        filePath
-	ObjectDB         filePath
+	Repo              filePath
+	RefsDir           filePath
+	RefsHeadDir       filePath
+	RefsHeadsMainFile filePath
+	HeadFile          filePath
+	IndexFile         filePath
+	ObjectDB          filePath
 }
 
 type GotObject interface {
@@ -77,6 +77,8 @@ type commitBuilder struct {
 }
 
 func (cb *commitBuilder) entries(entries []indexEntry) error {
+
+	// TODO: Start here
 	cb.commit.Entries = make(map[filePath]id, len(entries))
 
 	entryNamesForTree := make([]string, 0, len(entries))
@@ -102,6 +104,7 @@ func (cb *commitBuilder) entries(entries []indexEntry) error {
 
 	cb.commit.Tree = treeId
 
+	config := getConfig()
 	objDir := filepath.Join(config.ObjectDB, treeId[:2])
 	objFile := filepath.Join(objDir, treeId[2:])
 
@@ -137,6 +140,7 @@ func (cb *commitBuilder) message(msg string) {
 }
 
 func (cb *commitBuilder) setParent() error {
+	config := getConfig()
 	headRef, err := os.ReadFile(config.HeadFile)
 	if err != nil {
 		return err
@@ -161,7 +165,6 @@ func (cb *commitBuilder) setParent() error {
 }
 
 func (cb *commitBuilder) build() (*Commit, error) {
-	// TODO: Start here
 	var parentListing string
 
 	if cb.commit.Parent != "" {
@@ -177,6 +180,7 @@ func (cb *commitBuilder) build() (*Commit, error) {
 		return nil, err
 	}
 
+	config := getConfig()
 	objDir := filepath.Join(config.ObjectDB, id[:2])
 	objFile := filepath.Join(objDir, id[2:])
 
@@ -204,6 +208,8 @@ func (cb *commitBuilder) build() (*Commit, error) {
 		return nil, err
 	}
 
+	fmt.Printf("Created commit %s", id)
+
 	return cb.commit, nil
 }
 
@@ -213,18 +219,16 @@ func newCommitBuilder() *commitBuilder {
 	}
 }
 
-func GetConfig() Config {
-	if config == nil {
-		return Config{
-			Repo:             ".got",
-			RefsDir:          ".got/refs",
-			RefsHeadMainFile: ".got/refs/main",
-			HeadFile:         ".got/refs/heads/HEAD",
-			IndexFile:        ".got/index",
-			ObjectDB:         ".got/objects",
-		}
+func getConfig() Config {
+	return Config{
+		Repo:              ".got",
+		RefsDir:           ".got/refs",
+		RefsHeadDir:       ".got/refs/heads",
+		RefsHeadsMainFile: ".got/refs/heads/main",
+		HeadFile:          ".got/HEAD",
+		IndexFile:         ".got/index",
+		ObjectDB:          ".got/objects",
 	}
-	return *config
 }
 
 func newBlob(id id) *Blob {
@@ -236,25 +240,27 @@ func newTree(id id) *Tree {
 }
 
 func Init() error {
-	config := GetConfig()
+	config := getConfig()
 	if _, err := os.Stat(config.Repo); err == nil {
 		return fmt.Errorf("%s already exists", config.Repo)
 	}
 
-	rw := fs.FileMode(0666)
+	rw := fs.FileMode(0777)
 
-	if err := os.MkdirAll(config.RefsDir, rw); err != nil {
-		return fmt.Errorf("could not create refs directory path: %w", err)
+	if err := os.MkdirAll(config.ObjectDB, rw); err != nil {
+		return fmt.Errorf("could not create object directory path: %w", err)
 	}
 
-	head, err := os.Create(config.HeadFile)
-	if err != nil {
-		return fmt.Errorf("could not create HEAD file: %w", err)
+	if err := os.MkdirAll(config.RefsHeadDir, rw); err != nil {
+		return fmt.Errorf("could not create head ref directory path: %w", err)
 	}
-	defer head.Close()
 
-	if err = os.WriteFile(config.HeadFile, []byte("ref: refs/heads/main"), rw); err != nil {
-		return fmt.Errorf("could not write to HEAD file: %w", err)
+	if err := os.WriteFile(config.HeadFile, []byte("ref: refs/heads/main"), rw); err != nil {
+		return fmt.Errorf("could not write HEAD file: %w", err)
+	}
+
+	if err := os.WriteFile(config.RefsHeadsMainFile, []byte(""), rw); err != nil {
+		return fmt.Errorf("could not write HEAD file: %w", err)
 	}
 
 	index, err := os.Create(config.IndexFile)
@@ -263,12 +269,11 @@ func Init() error {
 	}
 	defer index.Close()
 
-	InitIndex(index)
-
 	return nil
 }
 
 func GetObjectFile(id id) (*os.File, error) {
+	config := getConfig()
 	db := filepath.Join(config.ObjectDB)
 	objects, err := os.ReadDir(db)
 	if err != nil {
@@ -293,6 +298,85 @@ func GetObjectFile(id id) (*os.File, error) {
 	}
 
 	return nil, fmt.Errorf("could not find object file for %q\n", id)
+}
+
+func getIdFromRef(ref filePath) (id, error) {
+	config := getConfig()
+	path := filepath.Join(config.Repo, ref)
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("could not get ref %q: %w", path, err)
+	}
+
+	if id(b) == "" {
+		return "", noHeadCommit
+	}
+
+	return id(b), nil
+}
+
+// TODO: unfinished
+func getHeadCommit() (*Commit, error) {
+	config := getConfig()
+	b, err := os.ReadFile(config.HeadFile)
+	if err != nil {
+		return nil, err
+	}
+
+	ref := string(b)
+
+	var head id
+
+	if strings.HasPrefix(ref, "ref") {
+		refPath := strings.Split(ref, ": ")[1]
+		head, err = getIdFromRef(refPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Get Object file using ID - GetObjectFile
+	commitFile, err := GetObjectFile(head)
+	if err != nil {
+		return nil, err
+	}
+	defer commitFile.Close()
+
+	// Get tree ID from commit
+	scanner := bufio.NewScanner(commitFile)
+
+	var tree id
+	line := 1
+	for scanner.Scan() {
+		if line == 1 && !strings.HasPrefix(scanner.Text(), "commit") {
+			return nil, fmt.Errorf("file %s does not contain commit object", head)
+		}
+
+		if line == 2 {
+			if !strings.HasPrefix(scanner.Text(), "tree") {
+				return nil, fmt.Errorf("commit %v incorrectly formatted", head)
+			}
+
+			tree = strings.Split(scanner.Text(), " ")[1]
+			break
+		}
+
+		line++
+	}
+
+	treeFile, err := GetObjectFile(tree)
+	if err != nil {
+		return nil, err
+	}
+	defer treeFile.Close()
+
+	contents, err := os.ReadFile(treeFile.Name())
+
+	fmt.Printf("Content of tree file:\n\n%s", contents)
+
+	// Load into commit struct
+	return nil, nil
 }
 
 func WriteObject(op objectPath) (GotObject, error) {
@@ -324,6 +408,7 @@ func writeBlob(op objectPath) (*Blob, error) {
 		return nil, err
 	}
 
+	config := getConfig()
 	objDir := filepath.Join(config.ObjectDB, id[:2])
 	objFile := filepath.Join(objDir, id[2:])
 
@@ -390,6 +475,7 @@ func writeTree(op objectPath) (*Tree, error) {
 		return nil, err
 	}
 
+	config := getConfig()
 	objDir := filepath.Join(config.ObjectDB, id[:2])
 	objFile := filepath.Join(objDir, id[2:])
 
