@@ -96,17 +96,30 @@ func (i *Index) UpdateOrAddEntry(path string) error {
 			return err
 		}
 
-		found, index := i.IncludesFile(path)
+		found, entryIndex := i.IncludesFile(path)
 		if found {
-			i.entries[index].Id = blobId
+			i.entries[entryIndex].Id = blobId
 			return nil
+		}
+
+		parent, err := getHeadCommit()
+		if err != nil {
+			return fmt.Errorf("could not get head commit: %s", err)
+		}
+
+		status := STATUS_ADD
+
+		if parent != nil {
+			if _, ok := parent.Entries[fName]; ok {
+				status = STATUS_MODIFY
+			}
 		}
 
 		entry := indexEntry{
 			Id:     blobId,
 			Name:   path,
 			IsDir:  false,
-			Status: STATUS_ADD, // Need to implement logic to determine status
+			Status: status,
 		}
 
 		i.entries = append(i.entries, entry)
@@ -192,6 +205,7 @@ func GetIndex() (Index, error) {
 	if err != nil {
 		return Index{}, fmt.Errorf("could not open index file: %w", err)
 	}
+	defer indexFile.Close()
 
 	index := Index{}
 	scanner := bufio.NewScanner(indexFile)

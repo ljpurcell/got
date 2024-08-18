@@ -74,6 +74,7 @@ type commitBuilder struct {
 }
 
 func (cb *commitBuilder) entries(entries []indexEntry) error {
+	// TODO: Start here
 	cb.commit.Entries = make(map[filePath]id, len(entries))
 
 	entryNamesForTree := make([]string, 0, len(entries))
@@ -162,7 +163,6 @@ func (cb *commitBuilder) setParent() error {
 }
 
 func (cb *commitBuilder) build() (*Commit, error) {
-	// TODO: Start here
 	var parentListing string
 
 	if cb.commit.Parent != "" {
@@ -205,6 +205,8 @@ func (cb *commitBuilder) build() (*Commit, error) {
 	if err = os.WriteFile(objFile, b.Bytes(), 0700); err != nil {
 		return nil, err
 	}
+
+	fmt.Printf("Created commit %s", id)
 
 	return cb.commit, nil
 }
@@ -275,7 +277,7 @@ func Init() error {
 		return fmt.Errorf("%s already exists", configPath)
 	}
 
-	rw := fs.FileMode(0666)
+	rw := fs.FileMode(0777)
 
 	if err := os.WriteFile(getConfigPath(), []byte("ref: refs/heads/main"), rw); err != nil {
 		return fmt.Errorf("could not write to HEAD file: %w", err)
@@ -319,6 +321,83 @@ func GetObjectFile(id id) (*os.File, error) {
 	}
 
 	return nil, fmt.Errorf("could not find object file for %q\n", id)
+}
+
+func getIdFromRef(ref filePath) (id, error) {
+	path := filepath.Join(getRepoPath(), ref)
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("could not get ref %q: %w", path, err)
+	}
+
+	if id(b) == "" {
+		return "", errors.New("no head commit")
+	}
+
+	return id(b), nil
+}
+
+// TODO: unfinished
+func getHeadCommit() (*Commit, error) {
+	b, err := os.ReadFile(getHeadPath())
+	if err != nil {
+		return nil, err
+	}
+
+	ref := string(b)
+
+	var head id
+
+	if strings.HasPrefix(ref, "ref") {
+		refPath := strings.Split(ref, ": ")[1]
+		head, err = getIdFromRef(refPath)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Get Object file using ID - GetObjectFile
+	commitFile, err := GetObjectFile(head)
+	if err != nil {
+		return nil, err
+	}
+	defer commitFile.Close()
+
+	// Get tree ID from commit
+	scanner := bufio.NewScanner(commitFile)
+
+	var tree id
+	line := 1
+	for scanner.Scan() {
+		if line == 1 && !strings.HasPrefix(scanner.Text(), "commit") {
+			return nil, fmt.Errorf("file %s does not contain commit object", head)
+		}
+
+		if line == 2 {
+			if !strings.HasPrefix(scanner.Text(), "tree") {
+				return nil, fmt.Errorf("commit %v incorrectly formatted", head)
+			}
+
+			tree = strings.Split(scanner.Text(), " ")[1]
+			break
+		}
+
+		line++
+	}
+
+	treeFile, err := GetObjectFile(tree)
+	if err != nil {
+		return nil, err
+	}
+	defer treeFile.Close()
+
+	contents, err := os.ReadFile(treeFile.Name())
+
+	fmt.Printf("Content of tree file:\n\n%s", contents)
+
+	// Load into commit struct
+	return nil, nil
 }
 
 func WriteObject(op objectPath) (GotObject, error) {
