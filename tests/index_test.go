@@ -13,9 +13,6 @@ func TestGetIndex(t *testing.T) {
 		t.Fatal("index has not been initialised, should return error")
 	}
 
-	var b bufferReadWriteTruncate
-	got.InitIndex(b)
-
 	_, err = got.GetIndex()
 	if err != nil {
 		t.Fatalf("could not get index: %s", err)
@@ -23,9 +20,6 @@ func TestGetIndex(t *testing.T) {
 }
 
 func TestIndexIncludes(t *testing.T) {
-	var b bufferReadWriteTruncate
-	got.InitIndex(b)
-
 	index, err := got.GetIndex()
 	if err != nil {
 		t.Fatalf("could not get index: %s", err)
@@ -53,9 +47,6 @@ func TestIndexIncludes(t *testing.T) {
 }
 
 func TestAddToIndex(t *testing.T) {
-	var b bufferReadWriteTruncate
-	got.InitIndex(b)
-
 	index, err := got.GetIndex()
 	if err != nil {
 		t.Fatalf("could not get index: %s", err)
@@ -97,9 +88,6 @@ func TestAddToIndex(t *testing.T) {
 }
 
 func TestUpdateIndex(t *testing.T) {
-	var b bufferReadWriteTruncate
-	got.InitIndex(b)
-
 	index, err := got.GetIndex()
 	if err != nil {
 		t.Fatalf("could not get index: %s", err)
@@ -137,9 +125,6 @@ func TestUpdateIndex(t *testing.T) {
 }
 
 func TestClearIndex(t *testing.T) {
-	var b bufferReadWriteTruncate
-	got.InitIndex(b)
-
 	index, err := got.GetIndex()
 	if err != nil {
 		t.Fatalf("could not get index: %s", err)

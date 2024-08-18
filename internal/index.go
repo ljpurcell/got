@@ -2,7 +2,6 @@ package got
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -133,11 +132,11 @@ func (i *Index) RemoveFile(file string) (removed bool, err error) {
 }
 
 func (i *Index) Save() error {
-	if _, err := os.Stat(config.IndexFile); err != nil {
+	if _, err := os.Stat(getIndexPath()); err != nil {
 		return err
 	}
 
-	if err := os.Truncate(config.IndexFile, 0); err != nil {
+	if err := os.Truncate(getIndexPath(), 0); err != nil {
 		return err
 	}
 
@@ -146,7 +145,7 @@ func (i *Index) Save() error {
 		contents += fmt.Sprintf("%v %v %v\n", entry.Status, entry.Id, entry.Name)
 	}
 
-	return os.WriteFile(config.IndexFile, []byte(contents), 0700)
+	return os.WriteFile(getIndexPath(), []byte(contents), 0700)
 }
 
 func (i *Index) Length() int {
@@ -175,37 +174,27 @@ func (i *Index) Commit(msg string) error {
 	}
 
 	// 2. Update hash pointed at by main in ref file
-	if err := os.Truncate(config.RefsHeadMainFile, 0); err != nil {
+	if err := os.Truncate(getRefHeadsMainFilePath(), 0); err != nil {
 		return err
 	}
 
 	rw := fs.FileMode(0666)
-	if err := os.WriteFile(config.RefsHeadMainFile, []byte(commit.Id), rw); err != nil {
-		return fmt.Errorf("Could not write commit id %v to %v file: %v", commit.Id, config.RefsHeadMainFile, err)
+	if err := os.WriteFile(getRefHeadsMainFilePath(), []byte(commit.Id), rw); err != nil {
+		return fmt.Errorf("Could not write commit id %v to %v file: %v", commit.Id, getRefHeadsMainFilePath(), err)
 	}
 
 	return nil
 }
 
-func InitIndex(storage storer) (initialised bool) {
-	if stagingIndex.storage != nil {
-		return false
-	}
-
-	stagingIndex = Index{
-		storage: storage,
-	}
-
-	return true
-}
-
 // TODO: Could do with work
 func GetIndex() (Index, error) {
-	if stagingIndex.storage == nil {
-		return Index{}, errors.New("you must initialise the index (got.InitIndex) before using it")
+	indexFile, err := os.Open(getIndexPath())
+	if err != nil {
+		return Index{}, fmt.Errorf("could not open index file: %w", err)
 	}
 
-	scanner := bufio.NewScanner(stagingIndex.storage)
+	index := Index{}
+	scanner := bufio.NewScanner(indexFile)
 	for scanner.Scan() {
 		entryParts := strings.Split(scanner.Text(), " ")
 		entry := indexEntry{
@@ -214,8 +203,8 @@ func GetIndex() (Index, error) {
 			Status: entryParts[0],
 		}
 
-		stagingIndex.entries = append(stagingIndex.entries, entry)
+		index.entries = append(index.entries, entry)
 	}
 
-	return stagingIndex, nil
+	return index, nil
 }

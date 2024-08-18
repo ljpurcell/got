@@ -1,10 +1,12 @@
 package got
 
 import (
+	"bufio"
 	"bytes"
 	"compress/zlib"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -14,6 +16,12 @@ import (
 	"time"
 )
 
+const (
+	BLOB   objectType = "blob"
+	TREE   objectType = "tree"
+	COMMIT objectType = "commit"
+)
+
 type (
 	filePath   = string
 	id         = string
@@ -21,24 +29,13 @@ type (
 	objectType = string
 )
 
-const (
-	BLOB   objectType = "blob"
-	TREE   objectType = "tree"
-	COMMIT objectType = "commit"
-)
-
-var (
-	config       *Config
-	stagingIndex Index
-)
+type user struct {
+	Name  string
+	Email string
+}
 
 type Config struct {
-	Repo             filePath
-	RefsDir          filePath
-	RefsHeadMainFile filePath
-	HeadFile         filePath
-	IndexFile        filePath
-	ObjectDB         filePath
+	User user
 }
 
 type GotObject interface {
@@ -102,7 +99,8 @@ func (cb *commitBuilder) entries(entries []indexEntry) error {
 
 	cb.commit.Tree = treeId
 
-	objDir := filepath.Join(config.ObjectDB, treeId[:2])
+	objectDb := getObjectsDirPath()
+	objDir := filepath.Join(objectDb, treeId[:2])
 	objFile := filepath.Join(objDir, treeId[2:])
 
 	if err = os.MkdirAll(objDir, 0700); err != nil {
@@ -137,14 +135,17 @@ func (cb *commitBuilder) message(msg string) {
 }
 
 func (cb *commitBuilder) setParent() error {
-	headRef, err := os.ReadFile(config.HeadFile)
+	headFile := getHeadPath()
+	headRef, err := os.ReadFile(headFile)
 	if err != nil {
 		return err
 	}
 
 	ref := strings.Split(string(headRef), ":")
 	pathBits := strings.Split(strings.TrimSpace(ref[1]), "/")
-	pathToRef := append([]string{config.Repo}, pathBits...)
+
+	repo := getRepoPath()
+	pathToRef := append([]string{repo}, pathBits...)
 	path := filepath.Join(pathToRef...)
 
 	if _, err = os.Stat(path); err != nil {
@@ -177,7 +178,8 @@ func (cb *commitBuilder) build() (*Commit, error) {
 		return nil, err
 	}
 
-	objDir := filepath.Join(config.ObjectDB, id[:2])
+	objectDb := getObjectsDirPath()
+	objDir := filepath.Join(objectDb, id[:2])
 	objFile := filepath.Join(objDir, id[2:])
 
 	if err = os.MkdirAll(objDir, 0700); err != nil {
@@ -213,18 +215,45 @@ func newCommitBuilder() *commitBuilder {
 	}
 }
 
-func GetConfig() Config {
-	if config == nil {
-		return Config{
-			Repo:             ".got",
-			RefsDir:          ".got/refs",
-			RefsHeadMainFile: ".got/refs/main",
-			HeadFile:         ".got/refs/heads/HEAD",
-			IndexFile:        ".got/index",
-			ObjectDB:         ".got/objects",
-		}
+func GetConfig() (Config, error) {
+	configFile, err := os.Open(getConfigPath())
+	if err != nil {
+		return Config{}, fmt.Errorf("could not open config file: %w", err)
 	}
-	return *config
+
+	c := Config{User: user{}}
+
+	scanner := bufio.NewScanner(configFile)
+	for scanner.Scan() {
+		line := strings.ToLower(strings.TrimSpace(scanner.Text()))
+
+		if strings.HasPrefix(line, "name") {
+			v, err := getValueFromConfigLine(line)
+			if err != nil {
+				return Config{}, fmt.Errorf("could not parse name in config file: %w", err)
+			}
+			c.User.Name = v
+		}
+
+		if strings.HasPrefix(line, "email") {
+			v, err := getValueFromConfigLine(line)
+			if err != nil {
+				return Config{}, fmt.Errorf("could not parse email in config file: %w", err)
+			}
+			c.User.Email = v
+		}
+
+	}
+
+	return c, nil
+}
+
+func getValueFromConfigLine(line string) (string, error) {
+	bits := strings.Split(line, "=")
+	if len(bits) != 2 {
+		return "", errors.New("incorrect format")
+	}
+	return strings.TrimSpace(bits[1]), nil
 }
 
 func newBlob(id id) *Blob {
@@ -236,48 +265,45 @@ func newTree(id id) *Tree {
 }
 
 func Init() error {
-	config := GetConfig()
-	if _, err := os.Stat(config.Repo); err == nil {
-		return fmt.Errorf("%s already exists", config.Repo)
+	repoPath := getRepoPath()
+	if _, err := os.Stat(repoPath); err == nil {
+		return fmt.Errorf("%s already exists", repoPath)
+	}
+
+	configPath := getConfigPath()
+	if _, err := os.Stat(configPath); err == nil {
+		return fmt.Errorf("%s already exists", configPath)
 	}
 
 	rw := fs.FileMode(0666)
 
-	if err := os.MkdirAll(config.RefsDir, rw); err != nil {
-		return fmt.Errorf("could not create refs directory path: %w", err)
-	}
-
-	head, err := os.Create(config.HeadFile)
-	if err != nil {
-		return fmt.Errorf("could not create HEAD file: %w", err)
-	}
-	defer head.Close()
-
-	if err = os.WriteFile(config.HeadFile, []byte("ref: refs/heads/main"), rw); err != nil {
+	if err := os.WriteFile(getConfigPath(), []byte("ref: refs/heads/main"), rw); err != nil {
 		return fmt.Errorf("could not write to HEAD file: %w", err)
 	}
 
-	index, err := os.Create(config.IndexFile)
+	if err := os.MkdirAll(getRefsDirPath(), rw); err != nil {
+		return fmt.Errorf("could not create refs directory path: %w", err)
+	}
+
+	index, err := os.Create(getIndexPath())
 	if err != nil {
 		return fmt.Errorf("could not create index file: %w", err)
 	}
 	defer index.Close()
 
-	InitIndex(index)
-
 	return nil
 }
 
 func GetObjectFile(id id) (*os.File, error) {
-	db := filepath.Join(config.ObjectDB)
-	objects, err := os.ReadDir(db)
+	objectsPath := getObjectsDirPath()
+	objects, err := os.ReadDir(objectsPath)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, dir := range objects {
 		if dir.Name() == id[:2] {
-			dPath := filepath.Join(db, dir.Name())
+			dPath := filepath.Join(objectsPath, dir.Name())
 			files, err := os.ReadDir(dPath)
 			if err != nil {
 				return nil, err
@@ -324,7 +350,7 @@ func writeBlob(op objectPath) (*Blob, error) {
 		return nil, err
 	}
 
-	objDir := filepath.Join(config.ObjectDB, id[:2])
+	objDir := filepath.Join(getObjectsDirPath(), id[:2])
 	objFile := filepath.Join(objDir, id[2:])
 
 	if err = os.MkdirAll(objDir, 0700); err != nil {
@@ -390,7 +416,7 @@ func writeTree(op objectPath) (*Tree, error) {
 		return nil, err
 	}
 
-	objDir := filepath.Join(config.ObjectDB, id[:2])
+	objDir := filepath.Join(getObjectsDirPath(), id[:2])
 	objFile := filepath.Join(objDir, id[2:])
 
 	if err = os.MkdirAll(objDir, 0700); err != nil {
