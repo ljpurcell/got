@@ -1,6 +1,10 @@
 package got
 
-import "path/filepath"
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+)
 
 const (
 	Repo             filePath = ".got"
@@ -13,34 +17,66 @@ const (
 	ConfigFile       filePath = "config"
 )
 
-func getRepoPath() filePath {
-	return Repo
+func getRepoPath() (filePath, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("could not get working directory: %w", err)
+	}
+	return filepath.Join(wd, Repo), nil
 }
 
-func getIndexPath() filePath {
-	return filepath.Join(Repo, IndexFile)
+func getIndexPath() (filePath, error) {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("could not get working directory for index: %w", err)
+	}
+	return filepath.Join(workingDir, Repo, IndexFile), nil
 }
 
-func getHeadPath() filePath {
-	return filepath.Join(Repo, HeadFile)
+func getHeadPath() (filePath, error) {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("could not get working directory for head: %w", err)
+	}
+	return filepath.Join(workingDir, Repo, HeadFile), nil
 }
 
-func getConfigPath() filePath {
-	return filepath.Join(Repo, ConfigFile)
+func getConfigPath() (filePath, error) {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("could not get working directory for config: %w", err)
+	}
+	return filepath.Join(workingDir, Repo, ConfigFile), nil
 }
 
-func getRefsDirPath() filePath {
-	return filepath.Join(Repo, RefsDir)
+func getRefsDirPath() (filePath, error) {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("could not get working directory for refs dir: %w", err)
+	}
+	return filepath.Join(workingDir, Repo, RefsDir), nil
 }
 
-func getRefHeadsDirPath() filePath {
-	return filepath.Join(Repo, RefsDir, RefHeadsDir)
+func getRefHeadsDirPath() (filePath, error) {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("could not get working directory for heads dir: %w", err)
+	}
+	return filepath.Join(workingDir, Repo, RefsDir, RefHeadsDir), nil
 }
 
-func getRefHeadsMainFilePath() filePath {
-	return filepath.Join(Repo, RefsDir, RefHeadsDir, RefHeadsMainFile)
+func getRefHeadsMainFilePath() (filePath, error) {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("could not get working directory for refs head main: %w", err)
+	}
+	return filepath.Join(workingDir, Repo, RefsDir, RefHeadsDir, RefHeadsMainFile), nil
 }
 
-func getObjectsDirPath() filePath {
-	return filepath.Join(Repo, ObjectsDir)
+func getObjectsDirPath() (filePath, error) {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("could not get working directory for objects dir: %w", err)
+	}
+	return filepath.Join(workingDir, Repo, ObjectsDir), nil
 }

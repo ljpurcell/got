@@ -74,7 +74,6 @@ type commitBuilder struct {
 }
 
 func (cb *commitBuilder) entries(entries []indexEntry) error {
-	// TODO: Start here
 	cb.commit.Entries = make(map[filePath]id, len(entries))
 
 	entryNamesForTree := make([]string, 0, len(entries))
@@ -100,7 +99,11 @@ func (cb *commitBuilder) entries(entries []indexEntry) error {
 
 	cb.commit.Tree = treeId
 
-	objectDb := getObjectsDirPath()
+	objectDb, err := getObjectsDirPath()
+	if err != nil {
+		return fmt.Errorf("could not get object directory path: %w", err)
+	}
+
 	objDir := filepath.Join(objectDb, treeId[:2])
 	objFile := filepath.Join(objDir, treeId[2:])
 
@@ -136,7 +139,11 @@ func (cb *commitBuilder) message(msg string) {
 }
 
 func (cb *commitBuilder) setParent() error {
-	headFile := getHeadPath()
+	headFile, err := getHeadPath()
+	if err != nil {
+		return fmt.Errorf("could not get head path: %w", err)
+	}
+
 	headRef, err := os.ReadFile(headFile)
 	if err != nil {
 		return err
@@ -145,7 +152,10 @@ func (cb *commitBuilder) setParent() error {
 	ref := strings.Split(string(headRef), ":")
 	pathBits := strings.Split(strings.TrimSpace(ref[1]), "/")
 
-	repo := getRepoPath()
+	repo, err := getRepoPath()
+	if err != nil {
+		return fmt.Errorf("could not get repo path: %w", err)
+	}
 	pathToRef := append([]string{repo}, pathBits...)
 	path := filepath.Join(pathToRef...)
 
@@ -178,7 +188,10 @@ func (cb *commitBuilder) build() (*Commit, error) {
 		return nil, err
 	}
 
-	objectDb := getObjectsDirPath()
+	objectDb, err := getObjectsDirPath()
+	if err != nil {
+		return nil, fmt.Errorf("could not get object directory path: %w", err)
+	}
 	objDir := filepath.Join(objectDb, id[:2])
 	objFile := filepath.Join(objDir, id[2:])
 
@@ -218,7 +231,12 @@ func newCommitBuilder() *commitBuilder {
 }
 
 func GetConfig() (Config, error) {
-	configFile, err := os.Open(getConfigPath())
+	configPath, err := getConfigPath()
+	if err != nil {
+		return Config{}, fmt.Errorf("could not get config path: %w", err)
+	}
+
+	configFile, err := os.Open(configPath)
 	if err != nil {
 		return Config{}, fmt.Errorf("could not open config file: %w", err)
 	}
@@ -266,28 +284,50 @@ func newTree(id id) *Tree {
 	return &Tree{object{Id: id, Type: TREE}}
 }
 
-func Init() error {
-	repoPath := getRepoPath()
+func Init(path filePath) error {
+	repoPath, err := getRepoPath()
+	if err != nil {
+		return fmt.Errorf("could not get repo path: %w", err)
+	}
 	if _, err := os.Stat(repoPath); err == nil {
 		return fmt.Errorf("%s already exists", repoPath)
 	}
 
-	configPath := getConfigPath()
+	configPath, err := getConfigPath()
+	if err != nil {
+		return fmt.Errorf("could not get config path: %w", err)
+	}
+
 	if _, err := os.Stat(configPath); err == nil {
 		return fmt.Errorf("%s already exists", configPath)
 	}
 
 	rw := fs.FileMode(0777)
 
-	if err := os.WriteFile(getConfigPath(), []byte("ref: refs/heads/main"), rw); err != nil {
+	headPath, err := getHeadPath()
+	if err != nil {
+		return fmt.Errorf("could not get head path: %w", err)
+	}
+
+	if err := os.WriteFile(headPath, []byte("ref: refs/heads/main"), rw); err != nil {
 		return fmt.Errorf("could not write to HEAD file: %w", err)
 	}
 
-	if err := os.MkdirAll(getRefsDirPath(), rw); err != nil {
+	refsDirPath, err := getRefsDirPath()
+	if err != nil {
+		return fmt.Errorf("could not get refs directory path: %w", err)
+	}
+
+	if err := os.MkdirAll(refsDirPath, rw); err != nil {
 		return fmt.Errorf("could not create refs directory path: %w", err)
 	}
 
-	index, err := os.Create(getIndexPath())
+	indexPath, err := getIndexPath()
+	if err != nil {
+		return fmt.Errorf("could not get index path: %w", err)
+	}
+
+	index, err := os.Create(indexPath)
 	if err != nil {
 		return fmt.Errorf("could not create index file: %w", err)
 	}
@@ -297,15 +337,18 @@ func Init() error {
 }
 
 func GetObjectFile(id id) (*os.File, error) {
-	objectsPath := getObjectsDirPath()
-	objects, err := os.ReadDir(objectsPath)
+	objectDb, err := getObjectsDirPath()
+	if err != nil {
+		return nil, fmt.Errorf("could not get object directory path: %w", err)
+	}
+	objects, err := os.ReadDir(objectDb)
 	if err != nil {
 		return nil, err
 	}
 
 	for _, dir := range objects {
 		if dir.Name() == id[:2] {
-			dPath := filepath.Join(objectsPath, dir.Name())
+			dPath := filepath.Join(objectDb, dir.Name())
 			files, err := os.ReadDir(dPath)
 			if err != nil {
 				return nil, err
@@ -324,7 +367,8 @@ func GetObjectFile(id id) (*os.File, error) {
 }
 
 func getIdFromRef(ref filePath) (id, error) {
-	path := filepath.Join(getRepoPath(), ref)
+	repoPath, err := getRepoPath()
+	path := filepath.Join(repoPath, ref)
 
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -340,7 +384,8 @@ func getIdFromRef(ref filePath) (id, error) {
 
 // TODO: unfinished
 func getHeadCommit() (*Commit, error) {
-	b, err := os.ReadFile(getHeadPath())
+	headPath, err := getHeadPath()
+	b, err := os.ReadFile(headPath)
 	if err != nil {
 		return nil, err
 	}
@@ -429,7 +474,12 @@ func writeBlob(op objectPath) (*Blob, error) {
 		return nil, err
 	}
 
-	objDir := filepath.Join(getObjectsDirPath(), id[:2])
+	objectDb, err := getObjectsDirPath()
+	if err != nil {
+		return nil, fmt.Errorf("could not get object directory path: %w", err)
+	}
+
+	objDir := filepath.Join(objectDb, id[:2])
 	objFile := filepath.Join(objDir, id[2:])
 
 	if err = os.MkdirAll(objDir, 0700); err != nil {
@@ -495,7 +545,12 @@ func writeTree(op objectPath) (*Tree, error) {
 		return nil, err
 	}
 
-	objDir := filepath.Join(getObjectsDirPath(), id[:2])
+	objectDb, err := getObjectsDirPath()
+	if err != nil {
+		return nil, fmt.Errorf("could not get object directory path: %w", err)
+	}
+
+	objDir := filepath.Join(objectDb, id[:2])
 	objFile := filepath.Join(objDir, id[2:])
 
 	if err = os.MkdirAll(objDir, 0700); err != nil {

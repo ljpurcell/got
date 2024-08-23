@@ -72,7 +72,20 @@ func InitCommand() *Command {
 		Short: "Initialises a got repository",
 		Long:  "Initialises a got repository with a hidden .got file to hold data",
 		Run: func(args []string) error {
-			if err := got.Init(); err != nil {
+			if len(args) > 1 {
+				return errors.New("too many arguments")
+			}
+
+			path, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("could not get working directory: %w", err)
+			}
+
+			if len(args) == 1 {
+				path = args[0]
+			}
+
+			if err := got.Init(path); err != nil {
 				return fmt.Errorf("could not initialise got repo: %w", err)
 			}
 

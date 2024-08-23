@@ -145,11 +145,15 @@ func (i *Index) RemoveFile(file string) (removed bool, err error) {
 }
 
 func (i *Index) Save() error {
-	if _, err := os.Stat(getIndexPath()); err != nil {
+	indexPath, err := getIndexPath()
+	if err != nil {
+		return fmt.Errorf("could not get index path: %w", err)
+	}
+	if _, err := os.Stat(indexPath); err != nil {
 		return err
 	}
 
-	if err := os.Truncate(getIndexPath(), 0); err != nil {
+	if err := os.Truncate(indexPath, 0); err != nil {
 		return err
 	}
 
@@ -158,7 +162,7 @@ func (i *Index) Save() error {
 		contents += fmt.Sprintf("%v %v %v\n", entry.Status, entry.Id, entry.Name)
 	}
 
-	return os.WriteFile(getIndexPath(), []byte(contents), 0700)
+	return os.WriteFile(indexPath, []byte(contents), 0700)
 }
 
 func (i *Index) Length() int {
@@ -187,13 +191,17 @@ func (i *Index) Commit(msg string) error {
 	}
 
 	// 2. Update hash pointed at by main in ref file
-	if err := os.Truncate(getRefHeadsMainFilePath(), 0); err != nil {
+	refsHeadMainPath, err := getRefHeadsMainFilePath()
+	if err != nil {
+		return fmt.Errorf("could not get ref head main file path: %w", err)
+	}
+	if err := os.Truncate(refsHeadMainPath, 0); err != nil {
 		return err
 	}
 
 	rw := fs.FileMode(0666)
-	if err := os.WriteFile(getRefHeadsMainFilePath(), []byte(commit.Id), rw); err != nil {
-		return fmt.Errorf("Could not write commit id %v to %v file: %v", commit.Id, getRefHeadsMainFilePath(), err)
+	if err := os.WriteFile(refsHeadMainPath, []byte(commit.Id), rw); err != nil {
+		return fmt.Errorf("Could not write commit id %v to %v file: %v", commit.Id, refsHeadMainPath, err)
 	}
 
 	return nil
@@ -201,7 +209,11 @@ func (i *Index) Commit(msg string) error {
 
 // TODO: Could do with work
 func GetIndex() (Index, error) {
-	indexFile, err := os.Open(getIndexPath())
+	indexPath, err := getIndexPath()
+	if err != nil {
+		return Index{}, fmt.Errorf("could not get index path: %w", err)
+	}
+	indexFile, err := os.Open(indexPath)
 	if err != nil {
 		return Index{}, fmt.Errorf("could not open index file: %w", err)
 	}
