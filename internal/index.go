@@ -13,9 +13,10 @@ import (
 type status = string
 
 const (
-	STATUS_ADD    = "A"
-	STATUS_MODIFY = "M"
-	STATUS_DELETE = "D"
+	STATUS_ADD              = "A"
+	STATUS_MODIFY           = "M"
+	STATUS_DELETE           = "D"
+	STATUS_ADD_AND_MODIFIED = "AM"
 )
 
 type storer interface {
@@ -96,23 +97,31 @@ func (i *Index) UpdateOrAddEntry(path string) error {
 			return err
 		}
 
-		found, entryIndex := i.IncludesFile(path)
-		if found {
-			i.entries[entryIndex].Id = blobId
-			return nil
-		}
-
 		parent, err := getHeadCommit()
 		if err != nil {
 			return fmt.Errorf("could not get head commit: %s", err)
 		}
 
-		status := STATUS_ADD
+		var status string
 
 		if parent != nil {
 			if _, ok := parent.Entries[fName]; ok {
 				status = STATUS_MODIFY
+			} else {
+				status = STATUS_ADD
 			}
+		} else {
+			status = STATUS_ADD
+		}
+
+		found, entryIndex := i.IncludesFile(path)
+		if found {
+			if i.entries[entryIndex].Id != blobId {
+				status += STATUS_MODIFY
+			}
+
+			i.entries[entryIndex].Id = blobId
+			return nil
 		}
 
 		entry := indexEntry{
